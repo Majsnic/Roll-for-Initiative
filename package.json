@@ -1,0 +1,9 @@
+{
+  "name": "roll-initiative",
+  "version": "1.0.0",
+  "description": "Roll for Initiative: an initiative tracker for Obsidian (D&D 5e 2024 and Cyberpunk RED).",
+  "main": "main.js",
+  "keywords": ["obsidian-plugin", "initiative-tracker", "dnd", "dnd5e", "cyberpunk-red", "ttrpg"],
+  "author": "Majsnic",
+  "license": "MIT"
+}
