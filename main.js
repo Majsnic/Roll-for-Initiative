@@ -575,6 +575,35 @@ function findBlock(lines, locator) {
   return null;
 }
 
+/** Set CSS custom properties without inline style assignment. */
+function setCssVars(el, vars) {
+  if (!el) return;
+  if (typeof el.setCssProps === "function") el.setCssProps(vars);
+  else if (el.style && typeof el.style.setProperty === "function") for (const [k, v] of Object.entries(vars)) el.style.setProperty(k, v);
+}
+
+/** Encounter card lists: make each column (stepper, HP, AC, CR, class) as
+ *  wide as its widest cell, so values line up row to row. */
+function alignCardColumns(list) {
+  if (!list || typeof list.querySelectorAll !== "function") return;
+  const kinds = { stepper: ".ri-enc-stepper", hp: ".ri-enc-stat.is-hp", ac: ".ri-enc-stat.is-ac", cr: ".ri-enc-stat.is-cr", who: ".ri-enc-stat.is-who" };
+  const measure = () => {
+    const reset = {};
+    for (const k of Object.keys(kinds)) reset[`--ri-w-${k}`] = "auto";
+    setCssVars(list, reset);
+    const out = {};
+    for (const [k, sel] of Object.entries(kinds)) {
+      let w = 0;
+      for (const cell of Array.from(list.querySelectorAll(sel))) w = Math.max(w, Math.ceil(cell.getBoundingClientRect().width));
+      if (w > 0) out[`--ri-w-${k}`] = `${w}px`;
+    }
+    setCssVars(list, out);
+  };
+  const win = list.win || (typeof window !== "undefined" ? window : null);
+  if (win && typeof win.requestAnimationFrame === "function") win.requestAnimationFrame(measure);
+  else measure();
+}
+
 // ---------------------------------------------------------------------------
 // Game systems
 // ---------------------------------------------------------------------------
@@ -1904,11 +1933,11 @@ class EncounterUI {
       const ratio = Math.max(0, Math.min(1, s.hp / max));
       const bar = main.createDiv({ cls: "ri-bar" });
       const fill = bar.createDiv({ cls: "ri-bar-fill" });
-      fill.style.width = `${Math.round(ratio * 100)}%`;
+      setCssVars(fill, { "--ri-pct": `${Math.round(ratio * 100)}%` });
       fill.addClass(ratio > 0.5 ? "ri-ok" : ratio > 0.25 ? "ri-hurt" : "ri-bad");
       if (s.temp) {
         const t = bar.createDiv({ cls: "ri-bar-temp" });
-        t.style.width = `${Math.round(Math.min(1, s.temp / max) * 100)}%`;
+        setCssVars(t, { "--ri-temp-pct": `${Math.round(Math.min(1, s.temp / max) * 100)}%` });
       }
     }
 
@@ -2728,6 +2757,7 @@ class EncounterCard extends MarkdownRenderChild {
     // list), and the input below adds character sheets by name.
     const asList = () => plan.players.map((p) => (p.link ? { name: p.name, link: p.link, isLink: true } : { name: p.name, isLink: false }));
     const ul = psec.createEl("ul", { cls: "ri-enc-list" });
+    this.alignLists = [ul];
     if (!plan.players.length) ul.createEl("li", { cls: "ri-empty", text: spec.playersMode === "none" ? "No players - monsters only." : "No characters yet - type a name below." });
     plan.players.forEach((p, i) => {
       const li = ul.createEl("li");
@@ -2782,13 +2812,14 @@ class EncounterCard extends MarkdownRenderChild {
     const chead = csec.createDiv({ cls: "ri-enc-section-head" });
     chead.createEl("h4", { text: "Creatures" });
     const rollLbl = chead.createEl("label", { cls: "ri-enc-rollhp" });
-    if (!this.plugin.sys.rollHp) rollLbl.style.display = "none";
+    if (!this.plugin.sys.rollHp) rollLbl.addClass("ri-hidden");
     const rollCb = rollLbl.createEl("input", { type: "checkbox" });
     rollCb.checked = !!spec.rollHP;
     rollLbl.createSpan({ text: "Roll for HP" });
     rollLbl.title = "On: each creature's HP is rolled from its hit dice when you press Roll Initiative. Off: the statblock's average HP.";
     rollCb.onchange = () => { spec.rollHP = rollCb.checked; save(); };
     const cul = csec.createEl("ul", { cls: "ri-enc-list" });
+    (this.alignLists = this.alignLists || []).push(cul);
     if (!plan.creatures.length) cul.createEl("li", { cls: "ri-empty", text: "No creatures yet - add some below." });
     plan.creatures.forEach((c, i) => {
       const li = cul.createEl("li");
@@ -2838,6 +2869,8 @@ class EncounterCard extends MarkdownRenderChild {
       if (c.stats.cr !== undefined) cr.createSpan({ cls: "ri-enc-cr", text: `CR ${c.stats.cr}` });
       else if (c.stats.threat) cr.createSpan({ cls: "ri-enc-cr", text: c.stats.threat });
     });
+
+    for (const l of this.alignLists) alignCardColumns(l);
 
     // add box (same autocomplete as the tracker)
     const add = csec.createDiv({ cls: "ri-add" });

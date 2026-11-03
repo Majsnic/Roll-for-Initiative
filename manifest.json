@@ -1,7 +1,7 @@
 {
   "id": "roll-initiative",
   "name": "Roll for Initiative",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minAppVersion": "1.5.0",
   "description": "Initiative tracker that keeps the fight as plain text in your note. Reads statblocks, live-syncs HP and conditions with character sheets, and supports D&D 5e (2024) and Cyberpunk RED.",
   "author": "Majsnic",

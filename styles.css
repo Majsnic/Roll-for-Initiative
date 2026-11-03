@@ -867,7 +867,6 @@ button.ri-cond:hover {
 	min-height: 26px;
 	display: flex;
 	align-items: center;
-	margin-bottom: 4px !important;
 }
 @container (max-width: 520px) {
 	.ri-enc-columns {
@@ -1098,33 +1097,52 @@ button.ri-cond:hover {
 	width: 18px;
 }
 
-/* ---- lists as aligned grids: every column as wide as its widest value ---- */
+/* ---- aligned columns: each row is a flex line; the plugin measures the
+   widest HP / AC / CR / class cell and sets --ri-w-* on the list, so every
+   column is as wide as its widest value ---- */
 .ri .ri-enc-columns ul.ri-enc-list {
-	display: grid;
-	column-gap: 6px;
-	row-gap: 4px;
-	align-items: center;
-}
-.ri .ri-enc-players ul.ri-enc-list {
-	/* token | name | HP | AC | class+level | x */
-	grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
-}
-.ri .ri-enc-creatures ul.ri-enc-list {
-	/* - n + | token | name | HP | AC | CR */
-	grid-template-columns: auto auto minmax(0, 1fr) auto auto auto;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
 }
 .ri .ri-enc-columns ul.ri-enc-list li {
-	grid-column: 1 / -1;
-	display: grid;
-	grid-template-columns: subgrid;
+	display: flex;
 	align-items: center;
+	gap: 4px;
 }
 .ri .ri-enc-columns ul.ri-enc-list li.ri-empty {
 	display: block;
 }
-.ri-enc-columns .ri-enc-stats {
-	display: contents;
+.ri .ri-enc-columns ul.ri-enc-list li > .ri-enc-stepper,
+.ri .ri-enc-columns ul.ri-enc-list li > .ri-token,
+.ri .ri-enc-columns ul.ri-enc-list li > .ri-del {
+	flex: none;
 }
+.ri .ri-enc-columns ul.ri-enc-list li > .ri-enc-stepper {
+	width: var(--ri-w-stepper, auto);
+}
+.ri .ri-enc-columns ul.ri-enc-list li > a,
+.ri .ri-enc-columns ul.ri-enc-list li > span:not(.ri-enc-stats) {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.ri .ri-enc-columns .ri-enc-stats {
+	display: flex;
+	align-items: center;
+	gap: 0;
+	flex: none;
+}
+.ri .ri-enc-columns .ri-enc-stats > .ri-enc-stat {
+	flex: none;
+	box-sizing: border-box;
+}
+.ri .ri-enc-columns .ri-enc-stats > .ri-enc-stat.is-hp { width: var(--ri-w-hp, auto); }
+.ri .ri-enc-columns .ri-enc-stats > .ri-enc-stat.is-ac { width: var(--ri-w-ac, auto); }
+.ri .ri-enc-columns .ri-enc-stats > .ri-enc-stat.is-cr { width: var(--ri-w-cr, auto); }
+.ri .ri-enc-columns .ri-enc-stats > .ri-enc-stat.is-who { width: var(--ri-w-who, auto); }
 .ri-enc-columns .ri-enc-stat,
 .ri-enc-columns .ri-enc-stat.is-hp,
 .ri-enc-columns .ri-enc-stat.is-hp.is-rolled,
@@ -1216,8 +1234,8 @@ button.ri-cond:hover {
 .ri-enc-columns .ri-enc-stat.is-who {
 	padding-left: 10px;
 }
-.ri .ri-enc-columns ul.ri-enc-list {
-	column-gap: 4px;
+.ri .ri-enc-columns ul.ri-enc-list li {
+	gap: 4px;
 }
 .ri .ri-enc-columns ul.ri-enc-list li {
 	padding: 8px 3px 8px 4px;
@@ -1249,4 +1267,20 @@ button.ri-cond:hover {
 }
 .ri-edit .ri-direct {
 	border-style: dashed;
+}
+
+/* creature header sits 4px above its list (lines up with the Players header) */
+.ri .ri-enc-columns .ri-enc-creatures h4 {
+	margin-bottom: 4px;
+}
+
+/* values set from code through CSS variables (no inline styles) */
+.ri-bar-fill {
+	width: var(--ri-pct, 0%);
+}
+.ri-bar-temp {
+	width: var(--ri-temp-pct, 0%);
+}
+.ri-hidden {
+	display: none;
 }

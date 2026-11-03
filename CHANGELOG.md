@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.1
+- **CSS lint clean:**
+  - removed `subgrid`, `display: contents`, `column-gap` and `!important` from `styles.css`;
+  - the encounter card still lines up its HP / AC / CR / class columns: the plugin now measures each column and sets its width through CSS variables;
+  - long creature names now fit better on the card.
+- **No inline styles:** HP bar widths and the hidden *Roll for HP* option now use CSS variables and classes.
+
 ## 1.0.0
 First public release.
 
