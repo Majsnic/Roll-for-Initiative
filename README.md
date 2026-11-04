@@ -73,6 +73,27 @@ Large battles stay manageable: a **group** is one row for many identical creatur
 |---|---|
 | ![Groups of 10 on the encounter card](docs/screenshots/group-card.png) | ![−3 over the HP bar](docs/screenshots/casualty.png) |
 
+### Rolled damage and healing: "Who takes the damage?"
+
+During a fight, when someone rolls **damage** or **healing**, a window asks **Who takes the damage?** (or **Who takes the heal?**). It catches rolls from:
+- the dice tray of the **Game Master Interactive Screen**;
+- the roll buttons on **One DnD Character Sheet**;
+- **Fantasy Statblocks** actions (through the Dice Roller plugin).
+
+To use it:
+- **Click a creature** and the HP is taken off, or added, straight away. This works for character sheets, groups and Cyberpunk armour too.
+- **Several targets…** lets you tick everyone caught in a Fireball and apply to all of them.
+- **½** halves the damage for a successful save or resistance. You can also type any amount.
+- **Nobody** closes the window.
+
+The likely targets come first:
+- for damage, the other side, with the attacker and anyone who's down at the bottom;
+- for healing, the healer's own side.
+
+Attack rolls, checks and initiative rolls are ignored. Turn it off under **Settings → Rolled damage and healing**.
+
+![Who takes the damage?](docs/screenshots/damage.png)
+
 ### Player screen
 
 Show the fight to your players on a second screen with **[TTRPG Tools – Player Screen](https://github.com/jareika/ttrpg-tools-screen)** by Jareika.
@@ -223,6 +244,7 @@ The **[full guide](docs/GUIDE.md)** covers everything else:
 | Group size / Group automatically from | Default group size for armies, and from which count creatures start as a group |
 | Show casualties | Floating −N over a group's HP bar when members go down |
 | Health bars on the player screen | Everyone / player characters only / nobody |
+| Ask who takes rolled damage / healing | The "Who takes the damage?" window for damage and healing rolls during a fight |
 | Ask players for initiative | Opens a window to type each player's own roll |
 | End combat when all enemies are down | Auto-end (on by default) |
 | Monster / NPC / Players folders | Where to look for creatures, neutral NPCs and (Cyberpunk) player notes |
@@ -301,6 +323,16 @@ ri.setRoller(null); // back to the built-in dice
   - rolled HP: the *Roll monster HP* setting and the encounter card's *Roll for HP*.
 - **Batches:** rolling for everyone sends one `rollMany` call with every request. With *Group initiative* on, there's one request per creature type.
 - **Fallback:** if `rollMany` throws, returns the wrong number of values, returns non-numbers, or takes longer than 15 s, the built-in dice roll instead. Combat never gets stuck.
+
+### `ri.applyRoll(roll)` → `Promise<boolean>`
+Opens **Who takes the damage / heal?** for a roll, even when the setting is off.
+```js
+await ri.applyRoll({ total: 12, kind: "damage", damageType: "Fire", who: "Aria", action: "Fireball" });
+await ri.applyRoll({ total: 7, kind: "healing", who: "Dexar", action: "Cure Wounds" });
+```
+- `kind` is `"damage"` or `"healing"`; other kinds are ignored.
+- `who`, `whoPath`, `action` and `damageType` are optional. `who` / `whoPath` decide who's listed first.
+- Roll for Initiative also listens to the GM screen's `game-master-screen:rolled` event (`{ total, kind, damageType, who, whoPath, action, crit }`), so the GM screen doesn't need to call this for its own rolls.
 
 ### Small calls
 ```js

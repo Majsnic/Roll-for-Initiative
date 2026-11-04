@@ -86,6 +86,7 @@ const DEFAULT_SETTINGS = {
   autoGroupFrom: 0, // 0 = off; otherwise counts this big start as a group
   showCasualties: true,
   playerScreenBars: "all", // "all" | "players" | "none"
+  askDamageTarget: true, // rolled damage / healing asks who takes it
   party: "",
   active: null, // { path, id }
 };
@@ -3693,6 +3694,202 @@ class PlayerScreenChild extends MarkdownRenderChild {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Rolled damage / healing -> "Who takes the damage?" (GM screen dice tray,
+// character sheet buttons and Fantasy Statblocks via Dice Roller)
+// ---------------------------------------------------------------------------
+
+const GMS_ID = "game-master-screen";
+
+/** Who rolled what, read from around a clicked Dice Roller button (the
+ *  character sheet's Actions/Spells rows or a Fantasy Statblocks action).
+ *  Same rules as the Game Master Interactive Screen, for when it isn't installed. */
+function diceRollContext(el, noteOf) {
+  const clean = (x) => String(x || "").replace(/\s+/g, " ").replace(/[.:]\s*$/, "").trim();
+  const ctx = { who: null, whoPath: null, action: null, kind: null, damageType: null };
+  const formula = String((el.getAttribute && el.getAttribute("data-dice")) || el.textContent || "").toLowerCase();
+  const isD20 = /(^|[^\d])1?d20/.test(formula);
+  const cell = el.closest && el.closest(".dice-roll-cell");
+  if (cell) {
+    let row = cell.parentElement;
+    while (row && !row.querySelector(".action-name") && row.parentElement && row.querySelectorAll(".dice-roll-cell").length < 2) row = row.parentElement;
+    if (row) {
+      const cells = Array.from(row.querySelectorAll(".dice-roll-cell"));
+      const idx = cells.indexOf(cell);
+      const nameEl = row.querySelector(".action-name") || row.querySelector("a.internal-link") || row.firstElementChild;
+      if (nameEl && !nameEl.contains(el)) ctx.action = clean(nameEl.textContent).replace(/\s*↑$/, "");
+      const own = clean((cell.textContent || "").replace(el.textContent || "", ""));
+      if (idx === 0 && isD20) ctx.kind = "attack";
+      else {
+        const types = Array.from(row.querySelectorAll(".action-stat > b")).map((b) => clean(b.textContent)).filter(Boolean);
+        ctx.damageType = own || (types.length ? types[types.length - 1] : null);
+        ctx.kind = /heal|léč/i.test(ctx.damageType || "") ? "healing" : isD20 ? "roll" : "damage";
+        if (ctx.kind === "healing") ctx.damageType = null;
+      }
+    }
+  }
+  const sb = el.closest && el.closest(".statblock");
+  if (sb) {
+    const nm = sb.querySelector(".name, .statblock-name, .heading h1, h1");
+    if (nm) ctx.who = clean(nm.textContent);
+    const prop = el.closest(".property, .statblock-item-container, li");
+    const pn = prop && prop.querySelector(".property-name, strong, b");
+    if (pn && !pn.contains(el)) ctx.action = clean(pn.textContent);
+    if (!ctx.kind) {
+      let after = "";
+      for (let n = el.nextSibling; n && after.length < 60; n = n.nextSibling) after += n.textContent || "";
+      const dm = /^\)?\s*([A-Za-zÀ-ž]+)\s+damage/i.exec(after.trim());
+      if (isD20) ctx.kind = "attack";
+      else if (dm) { ctx.kind = "damage"; ctx.damageType = dm[1]; }
+      else if (/hit point|heal/i.test(after)) ctx.kind = "healing";
+      else ctx.kind = "damage";
+    }
+  }
+  if (!ctx.who && noteOf) {
+    const n = noteOf(el);
+    if (n) { ctx.who = n.name; ctx.whoPath = n.path; }
+  }
+  return ctx;
+}
+
+/** Side of a combatant for target ordering: "party" | "enemy" | "neutral". */
+function sideOf(session, c) {
+  const d = session.disp(c);
+  return d === "pc" || d === "ally" ? "party" : d;
+}
+
+/** Order the fight's combatants for a damage / heal prompt: the likely
+ *  targets first (the other side for damage, the roller's own side for
+ *  healing); for damage the attacker and anyone down go last. */
+function damageTargets(session, req) {
+  const list = session.enc.combatants.filter((c) => !c.off);
+  const norm = (s) => String(s || "").trim().toLowerCase();
+  let by = null;
+  if (req.whoPath) by = list.find((c) => { const r = session.r(c); return r.path === req.whoPath || (r.file && r.file.path === req.whoPath); }) || null;
+  if (!by && req.who) {
+    const w = norm(req.who);
+    by = list.find((c) => c.current && (norm(c.name) === w || norm(c.name.replace(/\s+\d+$/, "")) === w))
+      || list.find((c) => norm(c.name) === w || norm(c.name.replace(/\s+\d+$/, "")) === w || (c.link && norm(linkBasename(c.link)) === w)) || null;
+  }
+  if (!by) by = list.find((c) => c.current) || null;
+  const bySide = by ? sideOf(session, by) : null;
+  const want = req.heal ? (bySide || "party") : bySide === "party" ? "enemy" : bySide === "enemy" ? "party" : null;
+  const order = new Map(list.map((c, i) => [c, i]));
+  const score = (c) => {
+    let s = 0;
+    if (want && sideOf(session, c) !== want) s += 10;
+    if (c === by && !req.heal) s += 20; // an attacker rarely hits itself; a healer often heals itself
+    if (!req.heal && session.isDown(c)) s += 40;
+    return s;
+  };
+  return { by, targets: list.slice().sort((a, b) => score(a) - score(b) || order.get(a) - order.get(b)) };
+}
+
+/** "Who takes the damage?" / "Who takes the heal?" */
+class DamageTargetModal extends Modal {
+  constructor(plugin, req, onClosed) {
+    super(plugin.app);
+    this.plugin = plugin;
+    this.req = req;
+    this.onClosed = onClosed;
+    this.amount = req.amount;
+    this.multi = false;
+    this.picked = new Set();
+  }
+  onOpen() {
+    this.modalEl.addClass("ri-dmg-modal");
+    this.draw();
+  }
+  onClose() {
+    this.contentEl.empty();
+    if (this.onClosed) { const f = this.onClosed; this.onClosed = null; f(); }
+  }
+  draw() {
+    const { req } = this;
+    const session = req.session;
+    const el = this.contentEl;
+    el.empty();
+    el.addClass("ri-dmg");
+    this.titleEl.setText(req.heal ? "Who takes the heal?" : "Who takes the damage?");
+    const what = [`${req.amount}${req.damageType ? ` ${req.damageType}` : ""} ${req.heal ? "healing" : "damage"}`];
+    const from = [req.who, req.action].filter(Boolean).join(" – ");
+    if (from) what.push(from);
+    if (req.crit) what.push("critical");
+    el.createDiv({ cls: `ri-dmg-what ${req.heal ? "is-heal" : "is-damage"}`, text: what.join(" · ") });
+
+    const amt = el.createDiv({ cls: "ri-dmg-amount" });
+    amt.createSpan({ cls: "ri-dmg-label", text: req.heal ? "Heal" : "Damage" });
+    const inp = amt.createEl("input", { type: "number" });
+    inp.value = String(this.amount);
+    inp.setAttr("aria-label", "Amount");
+    inp.addEventListener("input", () => { const v = parseInt(inp.value, 10); this.amount = Number.isFinite(v) && v >= 0 ? v : 0; });
+    if (!req.heal) {
+      const half = amt.createEl("button", { text: "½", attr: { "aria-label": "Half (save or resistance)" } });
+      half.title = "Half damage (successful save, resistance)";
+      half.onclick = (e) => { e.preventDefault(); this.amount = Math.floor(req.amount / 2); inp.value = String(this.amount); };
+      const full = amt.createEl("button", { text: "Full" });
+      full.onclick = (e) => { e.preventDefault(); this.amount = req.amount; inp.value = String(this.amount); };
+    }
+
+    const { by, targets } = damageTargets(session, req);
+    const list = el.createDiv({ cls: "ri-dmg-list" });
+    if (!targets.length) list.createDiv({ cls: "ri-dmg-empty", text: "Nobody is in the fight." });
+    const ui = { app: this.app, session };
+    for (const c of targets) {
+      const s = session.stat(c);
+      const row = list.createEl("button", { cls: `ri-dmg-row is-${session.colour(c)}` });
+      if (session.isDown(c)) row.addClass("is-down");
+      if (c === by) row.addClass("is-by");
+      if (this.multi) {
+        const cb = row.createEl("input", { type: "checkbox", cls: "ri-dmg-check" });
+        cb.checked = this.picked.has(c);
+        cb.tabIndex = -1;
+      }
+      const tok = row.createDiv({ cls: `ri-token ri-token-mini is-${session.colour(c)}` });
+      const face = tok.createDiv({ cls: "ri-token-face" });
+      const src = EncounterUI.prototype.imageSrc.call(ui, s.image);
+      if (src) { const img = face.createEl("img"); img.src = src; img.alt = ""; }
+      else { face.addClass("is-initials"); face.setText(c.name.replace(/\s+\d+$/, "").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()); }
+      const name = row.createSpan({ cls: "ri-dmg-name", text: c.name });
+      if (c.player) name.createSpan({ cls: "ri-tag is-live", text: "PC" });
+      if (s.group) name.createSpan({ cls: "ri-tag is-group", text: `${s.alive}/${s.group}` });
+      if (c.hidden) name.createSpan({ cls: "ri-tag", text: "hidden" });
+      if (c === by) name.createSpan({ cls: "ri-dmg-by", text: req.heal ? "healer" : "attacker" });
+      row.createSpan({ cls: "ri-dmg-hp", text: s.hp !== undefined ? `${s.hp}/${s.maxHp ?? s.hp}` : "–" });
+      row.onclick = async (e) => {
+        e.preventDefault();
+        if (this.multi) {
+          if (this.picked.has(c)) this.picked.delete(c); else this.picked.add(c);
+          this.draw();
+          return;
+        }
+        await this.apply([c]);
+      };
+    }
+
+    const foot = el.createDiv({ cls: "ri-dmg-foot" });
+    const several = foot.createEl("button", { cls: "ri-dmg-several", text: this.multi ? "One target" : "Several targets…" });
+    several.onclick = (e) => { e.preventDefault(); this.multi = !this.multi; this.picked.clear(); this.draw(); };
+    const nobody = foot.createEl("button", { text: "Nobody" });
+    nobody.onclick = (e) => { e.preventDefault(); this.close(); };
+    if (this.multi) {
+      const go = foot.createEl("button", { cls: "mod-cta", text: `Apply to ${this.picked.size || "…"}` });
+      go.disabled = !this.picked.size;
+      go.onclick = async (e) => { e.preventDefault(); await this.apply([...this.picked]); };
+    }
+  }
+  /** Apply the amount to these combatants (HP, sheets, groups, armor - all as usual). */
+  async apply(targets) {
+    const { req } = this;
+    const amount = this.amount;
+    this.close();
+    if (!amount || !targets.length) return;
+    for (const c of targets) await req.session.changeHp(c, amount, req.heal ? "heal" : "damage");
+    const names = targets.map((c) => c.name).join(", ");
+    new Notice(`${names}: ${req.heal ? "+" : "−"}${amount} HP${req.damageType && !req.heal ? ` (${req.damageType})` : ""}`);
+  }
+}
+
 class ConfirmModal extends Modal {
   constructor(app, title, message, buttons) {
     super(app);
@@ -4296,6 +4493,9 @@ class InitiativeSettingTab extends PluginSettingTab {
     numSetting("Group automatically from", "Creatures with at least this count start as a group on encounter cards (e.g. 8). Empty = never; turn it on per creature with the 👥 button.", "autoGroupFrom", "off");
     toggle("Show casualties", "Float a −1 / −3 over a group's HP bar when members go down (and +N when they get back up).", "showCasualties");
 
+    new Setting(containerEl).setName("Rolled damage and healing").setHeading();
+    toggle("Ask who takes rolled damage / healing", "During a fight, a damage or healing roll opens \"Who takes the damage?\" - click a creature (or tick several) and the HP is taken off or added. Works with the Game Master Interactive Screen's dice tray, character sheet roll buttons and Fantasy Statblocks (through Dice Roller).", "askDamageTarget");
+
     new Setting(containerEl).setName("Player screen").setHeading();
     containerEl.createEl("p", {
       cls: "setting-item-description",
@@ -4373,7 +4573,7 @@ class InitiativeSettingTab extends PluginSettingTab {
 // Plugin
 // ---------------------------------------------------------------------------
 
-const API_VERSION = "1.5.0";
+const API_VERSION = "1.6.0";
 const TEMPLATE = "```" + BLOCK + "\nname New encounter\nparty\n2x [[Goblin Warrior]]\n```\n";
 const ENCOUNTER_TEMPLATE = "```" + ENCOUNTER_BLOCK + "\n```\n";
 
@@ -4461,6 +4661,14 @@ class RollInitiativePlugin extends Plugin {
     this.addSettingTab(new InitiativeSettingTab(this.app, this));
 
     this.api = this.buildApi();
+
+    // Rolled damage / healing -> "Who takes the damage?"
+    this.registerEvent(this.app.workspace.on("game-master-screen:rolled", (r) => { this.onRolled(r).catch((e) => console.error(e)); }));
+    this.registerDomEvent(document, "click", (e) => {
+      const el = e.target && e.target.closest && e.target.closest(".dice-roller");
+      if (el) this.lastDiceClick = { t: Date.now(), ctx: diceRollContext(el, (x) => this.noteOfElement(x)) };
+    }, true);
+    this.registerEvent(this.app.workspace.on("dice-roller:new-result", (roller) => { this.onDiceRollerResult(roller).catch((e) => console.error(e)); }));
   }
 
   /** Public API for other plugins / scripts (see README "API for other plugins"). */
@@ -4489,6 +4697,8 @@ class RollInitiativePlugin extends Plugin {
         return true;
       },
       showOnPlayerScreen: () => this.showOnPlayerScreen(),
+      /** Ask "Who takes the damage/heal?" for a roll: { total, kind: "damage" | "healing", damageType?, who?, whoPath?, action?, target? } */
+      applyRoll: (roll) => this.onRolled(roll, true),
       endCombat: async (t) => {
         const s = await this.findSession(target(t));
         if (!s) return false;
@@ -4904,6 +5114,60 @@ class RollInitiativePlugin extends Plugin {
     return plan;
   }
 
+  /** Is the Game Master Interactive Screen forwarding Dice Roller rolls? Then
+   *  we take them from its event and don't listen to Dice Roller ourselves. */
+  gmsCatchesDiceRoller() {
+    const g = this.app.plugins && this.app.plugins.plugins && this.app.plugins.plugins[GMS_ID];
+    return !!(g && g.settings && g.settings.dice && g.settings.dice.catchDiceRoller);
+  }
+
+  /** A Dice Roller result the user clicked (character sheet / statblock) - used when the GM screen isn't catching them. */
+  async onDiceRollerResult(roller) {
+    if (this.gmsCatchesDiceRoller()) return;
+    const c = this.lastDiceClick;
+    if (!c || Date.now() - c.t > 12000) return;
+    this.lastDiceClick = null;
+    const total = Number(roller && roller.result);
+    if (!Number.isFinite(total)) return;
+    await this.onRolled({ ...c.ctx, total, label: c.ctx.action, formula: String((roller && roller.original) || "").replace(/^dice:\s*/i, "").trim() });
+  }
+
+  /** The note a clicked element sits in: { name, path }. */
+  noteOfElement(el) {
+    let file = null;
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      if (leaf.view && leaf.view.containerEl && leaf.view.containerEl.contains(el)) { file = leaf.view.file; break; }
+    }
+    if (!(file instanceof TFile)) return null;
+    const fm = (this.app.metadataCache.getFileCache(file) || {}).frontmatter || {};
+    const name = (typeof fm.character_name === "string" && fm.character_name.trim()) || (typeof fm.name === "string" && fm.name.trim()) || file.basename;
+    return { name, path: file.path };
+  }
+
+  /** A damage / healing roll: ask who takes it (running fights only, unless forced by the API). */
+  async onRolled(r, force = false) {
+    if (!r) return false;
+    if (!force && !this.settings.askDamageTarget) return false;
+    const kind = String(r.kind || "").toLowerCase();
+    const heal = kind === "healing" || kind === "heal";
+    if (!heal && kind !== "damage") return false;
+    const amount = Math.max(0, Math.round(Number(r.total)));
+    if (!Number.isFinite(amount)) return false;
+    const session = await this.findSession(r.target && r.target.sourcePath ? r.target : null);
+    if (!session || (!force && !session.isRunning())) return false;
+    this.damageQueue = this.damageQueue || [];
+    this.damageQueue.push({ session, amount, heal, damageType: r.damageType || null, who: r.who || null, whoPath: r.whoPath || null, action: r.action || r.label || null, formula: r.formula || null, crit: !!r.crit });
+    if (!this.damagePrompt) this.nextDamagePrompt();
+    return true;
+  }
+
+  nextDamagePrompt() {
+    const req = (this.damageQueue || []).shift();
+    if (!req) { this.damagePrompt = null; return; }
+    this.damagePrompt = new DamageTargetModal(this, req, () => this.nextDamagePrompt());
+    this.damagePrompt.open();
+  }
+
   /** api.newCombat: open the New combat window; resolves with what was made, or null. */
   newCombat(options = {}) {
     return new Promise((resolve) => {
@@ -5155,5 +5419,5 @@ module.exports._internals = {
   parseEncounterCreature, parseEncounterSpec, isNpcNote, quoteLinks, serializeEncounterSpec, difficultyWord,
   atlasEncounterToSpec, matchSheet, imageBaseName, AtlasLink,
   SYSTEMS, CyberBridge, cpredHit, cpredWoundConditions, cpredDeathSave, statsFromCyberpunk, cpredInitMod,
-  groupAlive, groupAreaHp, groupChunks, specAddText, folderPath, renderPlayerView, PlayerScreenChild, CombatWizardModal,
+  groupAlive, groupAreaHp, groupChunks, specAddText, folderPath, renderPlayerView, PlayerScreenChild, CombatWizardModal, DamageTargetModal, damageTargets, diceRollContext,
 };

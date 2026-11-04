@@ -1,7 +1,9 @@
 /* Roll Initiative - look follows Quick Initiative. Uses Obsidian's theme
    variables so it fits light, dark and community themes. */
 
-.ri {
+.ri,
+.ri-wizard,
+.ri-dmg {
 	--ri-radius: var(--radius-m, 8px);
 	--ri-accent: var(--interactive-accent, #7852ee);
 	--ri-ok: var(--color-green, #44cf6e);
@@ -9,6 +11,8 @@
 	--ri-bad: var(--color-red, #fb464c);
 	--ri-pc: var(--color-blue, #027aff);
 	--ri-neutral: var(--color-yellow, #e0ac00);
+}
+.ri {
 	border: 1px solid var(--background-modifier-border);
 	border-radius: calc(var(--ri-radius) + 4px);
 	background: var(--background-secondary);
@@ -209,7 +213,8 @@
 }
 
 /* token: round portrait with a coloured rim, like a VTT token */
-.ri .ri-token {
+.ri .ri-token,
+.ri-dmg .ri-token {
 	position: relative;
 	width: 40px;
 	height: 40px;
@@ -1624,4 +1629,109 @@ button.ri-cond:hover {
 }
 .ri-player-view .ri-row.is-current .ri-name {
 	color: var(--ri-accent);
+}
+
+/* ---- "Who takes the damage / heal?" ---- */
+.ri-dmg-modal {
+	width: min(460px, 92vw);
+}
+.ri-dmg-what {
+	margin: -4px 0 10px;
+	font-weight: 600;
+}
+.ri-dmg-what.is-damage {
+	color: var(--ri-bad);
+}
+.ri-dmg-what.is-heal {
+	color: var(--ri-ok);
+}
+.ri-dmg-amount {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: 10px;
+}
+.ri-dmg-label {
+	font-size: 0.85em;
+	color: var(--text-muted);
+	margin-right: 4px;
+}
+.ri-dmg-amount input {
+	width: 5.5em;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+}
+.ri-dmg-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	max-height: min(52vh, 460px);
+	overflow-y: auto;
+}
+.ri-dmg .ri-dmg-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	height: auto;
+	padding: 6px 10px;
+	text-align: left;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m, 8px);
+	background: var(--background-secondary);
+	box-shadow: none;
+	cursor: pointer;
+}
+.ri-dmg .ri-dmg-row:hover {
+	border-color: var(--ri-accent);
+	background: color-mix(in srgb, var(--ri-accent) 10%, var(--background-secondary));
+}
+.ri-dmg .ri-dmg-row.is-down {
+	opacity: 0.55;
+}
+.ri-dmg .ri-dmg-row.is-by {
+	border-style: dashed;
+}
+.ri-dmg .ri-token.ri-token-mini {
+	flex: none;
+	width: 30px;
+	height: 30px;
+}
+.ri-dmg-check {
+	flex: none;
+	pointer-events: none;
+}
+.ri-dmg-name {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-weight: 600;
+}
+.ri-dmg-by {
+	font-size: 0.75em;
+	font-weight: 400;
+	color: var(--text-faint);
+}
+.ri-dmg-hp {
+	flex: none;
+	font-variant-numeric: tabular-nums;
+	color: var(--text-muted);
+}
+.ri-dmg-empty {
+	color: var(--text-faint);
+	font-size: 0.9em;
+}
+.ri-dmg-foot {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 12px;
+}
+.ri-dmg .ri-dmg-several {
+	margin-right: auto;
 }

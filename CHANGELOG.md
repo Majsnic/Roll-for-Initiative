@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.6.0
+**"Who takes the damage?"**
+
+During a fight, a damage or healing roll asks who takes it. It catches rolls from:
+- the Game Master Interactive Screen's dice tray;
+- One DnD Character Sheet roll buttons;
+- Fantasy Statblocks actions (through Dice Roller).
+
+How it works:
+- Click a creature to apply the damage or healing.
+- *Several targets…* applies to many at once.
+- *½* halves the damage for saves and resistance.
+- The likely targets are listed first.
+- It works with character sheets, groups and Cyberpunk armour.
+
+Also:
+- With the GM screen installed, rolls are taken from its `game-master-screen:rolled` event. Without it, Roll for Initiative reads Dice Roller itself, and you never get the question twice.
+- New setting: *Ask who takes rolled damage / healing* (on by default).
+- New API call: `applyRoll(roll)`.
+- Fix: the New combat window now shows its accent colours.
+
 ## 1.5.0
 **API for other plugins** (`app.plugins.plugins["roll-initiative"].api`)
 
