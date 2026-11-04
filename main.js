@@ -1314,9 +1314,10 @@ class Session {
       if (c.each === undefined && r.hp !== undefined) { c.each = r.hp; this.dirty = true; }
       if (c.hp === undefined && c.each !== undefined) { c.maxHp = c.each * c.group; c.hp = c.maxHp; this.dirty = true; }
     } else if (c.hp === undefined) {
-      const rolled = this.plugin.settings.rollHp && r.hitDice ? rollDice(r.hitDice) : undefined;
-      const hp = rolled ?? r.hp;
-      if (hp !== undefined) { c.hp = hp; c.maxHp = hp; this.dirty = true; }
+      if (this.plugin.settings.rollHp && r.hitDice && rollDice(r.hitDice) !== undefined) {
+        // rolled in one batch by flushHpRolls() (through the dice hook)
+        (this.pendingHp = this.pendingHp || []).push({ c, hitDice: r.hitDice, avg: r.hp });
+      } else if (r.hp !== undefined) { c.hp = r.hp; c.maxHp = r.hp; this.dirty = true; }
     }
     if (c.ac === undefined && r.ac !== undefined) { c.ac = r.ac; this.dirty = true; }
     if (c.mod === undefined && r.mod !== undefined) { c.mod = r.mod; this.dirty = true; }
@@ -1327,6 +1328,19 @@ class Session {
   async resolveAll() {
     this.res = new Map();
     await Promise.all(this.enc.combatants.map((c) => this.resolveOne(c)));
+    await this.flushHpRolls();
+  }
+
+  /** Roll HP (Roll monster HP setting) for every creature waiting for it - one batch. */
+  async flushHpRolls() {
+    const pend = this.pendingHp || [];
+    this.pendingHp = [];
+    if (!pend.length) return;
+    const vals = await this.plugin.rollMany(pend.map((p) => ({ formula: String(p.hitDice).replace(/\s+/g, ""), label: p.c.name, kind: "hp", sourcePath: this.sourcePath, id: this.enc.id || "" })));
+    pend.forEach((p, i) => {
+      const hp = vals[i] ?? p.avg;
+      if (hp !== undefined && p.c.hp === undefined) { p.c.hp = hp; p.c.maxHp = hp; this.dirty = true; }
+    });
   }
 
   refreshSheets() {
@@ -1447,23 +1461,39 @@ class Session {
     return this.saved;
   }
 
+  /** pcValues: Map(player -> typed value, or null = roll it). Every roll
+   *  goes out as ONE batch (dice hook), then the order is set in one go. */
   async rollInitiative(pcValues) {
-    const groupRolls = new Map();
+    const reqs = [];
+    const assign = [];
+    const typed = [];
+    const groupIdx = new Map();
+    const grouped = this.plugin.settings.groupInitiative;
     for (const c of this.enc.combatants) {
       const s = this.stat(c);
+      const mod = s.mod ?? 0;
       if (c.player) {
-        if (pcValues && pcValues.has(c)) c.init = pcValues.get(c);
-        else if (this.plugin.settings.autoRollPlayers || c.init === undefined && !pcValues) c.init = this.plugin.initRoll() + (s.mod ?? 0);
+        const v = pcValues && pcValues.has(c) ? pcValues.get(c) : undefined;
+        if (v !== undefined && v !== null) typed.push([c, v]);
+        else if (v === null || this.plugin.settings.autoRollPlayers || (c.init === undefined && !pcValues)) {
+          assign.push([c, reqs.length]);
+          reqs.push(this.plugin.initRequest(c.name, mod, this));
+        }
       } else {
-        const key = c.link || c.name.replace(/\s+\d+$/, "");
-        if (this.plugin.settings.groupInitiative && groupRolls.has(key)) c.init = groupRolls.get(key);
+        const base = c.link ? linkBasename(c.link) : c.name.replace(/\s+\d+$/, "");
+        const key = c.link || base;
+        if (grouped && groupIdx.has(key)) assign.push([c, groupIdx.get(key)]);
         else {
-          c.init = this.plugin.initRoll() + (s.mod ?? 0);
-          groupRolls.set(key, c.init);
+          groupIdx.set(key, reqs.length);
+          assign.push([c, reqs.length]);
+          reqs.push(this.plugin.initRequest(grouped ? base : c.name, mod, this));
         }
       }
-      c.current = false;
     }
+    const vals = await this.plugin.rollMany(reqs);
+    for (const [c, v] of typed) c.init = v;
+    for (const [c, i] of assign) c.init = vals[i];
+    for (const c of this.enc.combatants) c.current = false;
     sortCombatants(this.enc, (c) => this.stat(c));
     this.enc.round = 1;
     this.enc.ended = false;
@@ -1522,8 +1552,9 @@ class Session {
   }
 
   async addCombatants(list) {
+    const added = [];
     for (const c of list) {
-      const names = new Set(this.enc.combatants.map((x) => x.name));
+      const names = new Set([...this.enc.combatants, ...added].map((x) => x.name));
       if (names.has(c.name)) {
         const base = c.name.replace(/\s+\d+$/, "");
         let n = 2;
@@ -1531,9 +1562,16 @@ class Session {
         c.name = `${base} ${n}`;
       }
       await this.resolveOne(c);
-      if (this.enc.round > 0 && c.init === undefined && !c.player) c.init = this.plugin.initRoll() + (this.stat(c).mod ?? 0);
-      this.enc.combatants.push(c);
+      added.push(c);
     }
+    await this.flushHpRolls();
+    // joining a running fight: roll their initiative (one batch)
+    const late = added.filter((c) => this.enc.round > 0 && c.init === undefined && !c.player);
+    if (late.length) {
+      const vals = await this.plugin.rollMany(late.map((c) => this.plugin.initRequest(c.name, this.stat(c).mod ?? 0, this)));
+      late.forEach((c, i) => { c.init = vals[i]; });
+    }
+    this.enc.combatants.push(...added);
     if (this.enc.round > 0) sortKeepCurrent(this.enc, (x) => this.stat(x));
     await this.commit();
   }
@@ -2309,7 +2347,7 @@ class EncounterUI {
         return Number.isFinite(v) && this.session.setInit(c, v);
       });
       this.button(ed, "check", "Set", "ri-set", set);
-      this.button(ed, "dices", `Roll ${signed(s.mod ?? 0)}`, "ri-rollone", run(() => this.session.setInit(c, this.plugin.initRoll() + (s.mod ?? 0))));
+      this.button(ed, "dices", `Roll ${signed(s.mod ?? 0)}`, "ri-rollone", run(async () => this.session.setInit(c, await this.plugin.rollInitFor(c.name, s.mod ?? 0, this.session))));
       input.addEventListener("keydown", (e) => {
         if (e.key === "Enter") { e.preventDefault(); set(); }
       });
@@ -2599,15 +2637,19 @@ class PlayerInitModal extends Modal {
       inp.placeholder = "roll";
       const dice = row.createEl("button", { cls: "ri-btn" });
       setIcon(dice, "dices");
-      dice.onclick = () => { inp.value = String(this.session.plugin.initRoll() + (s.mod ?? 0)); };
+      dice.onclick = async () => {
+        dice.disabled = true;
+        try { inp.value = String(await this.session.plugin.rollInitFor(c.name, s.mod ?? 0, this.session)); } finally { dice.disabled = false; }
+      };
       inputs.set(c, inp);
       inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
     }
     const submit = () => {
+      // empty = roll it (in the same batch as the monsters)
       const values = new Map();
       for (const [c, inp] of inputs) {
         const v = parseInt(inp.value, 10);
-        values.set(c, Number.isFinite(v) ? v : this.session.plugin.initRoll() + (this.session.stat(c).mod ?? 0));
+        values.set(c, Number.isFinite(v) ? v : null);
       }
       this.close();
       this.onSubmit(values);
@@ -3261,18 +3303,41 @@ const WIZARD_KINDS = {
 };
 
 class CombatWizardModal extends Modal {
-  constructor(plugin, kind = null) {
+  /** opts: { players: [note paths], returnText: bool, onDone(result | null) } */
+  constructor(plugin, kind = null, opts = {}) {
     super(plugin.app);
     this.plugin = plugin;
     this.kind = kind;
+    this.opts = opts || {};
+    this.done = false;
     const first = plugin.partyGroupNames()[0];
     this.spec = { name: "", party: first || "", playersMode: first ? "party" : "none", players: [], creatures: [], rollHP: false };
+    const pre = Array.isArray(this.opts.players) ? this.opts.players.filter((x) => typeof x === "string" && x.trim()) : [];
+    if (pre.length) {
+      const mc = plugin.app.metadataCache;
+      this.spec.playersMode = "list";
+      this.spec.party = "";
+      this.spec.players = pre.map((raw) => {
+        const p = raw.replace(/^\[\[|\]\]$/g, "").split("|")[0];
+        const f = plugin.app.vault.getAbstractFileByPath(p) || plugin.app.vault.getAbstractFileByPath(`${p}.md`) || mc.getFirstLinkpathDest(p.replace(/\.md$/, ""), "");
+        if (f instanceof TFile) return { name: f.basename, link: mc.fileToLinktext(f, "", true), isLink: true };
+        return { name: linkBasename(p), link: p.replace(/\.md$/, ""), isLink: true };
+      });
+    }
   }
   onOpen() {
     this.modalEl.addClass("ri-wizard-modal");
     this.draw();
   }
-  onClose() { this.contentEl.empty(); }
+  onClose() {
+    this.contentEl.empty();
+    if (!this.done && this.opts.onDone) { this.done = true; this.opts.onDone(null); }
+  }
+  /** Report what was created (api.newCombat + the roll-initiative:created event). */
+  created(result) {
+    this.app.workspace.trigger("roll-initiative:created", result);
+    if (!this.done && this.opts.onDone) { this.done = true; this.opts.onDone(result); }
+  }
 
   drawChoice(el) {
     this.titleEl.setText("New combat");
@@ -3423,14 +3488,17 @@ class CombatWizardModal extends Modal {
     if (!spec.creatures.length && spec.playersMode === "none") { new Notice("Add some creatures first."); return; }
     if (this.kind === "encounter") {
       const title = spec.name || `Encounter ${new Date().toISOString().slice(0, 10)}`;
-      const body = await this.plugin.encounterNoteBody({ ...spec, name: title });
-      this.close();
+      const id = randomId();
+      const body = await this.plugin.encounterNoteBody({ ...spec, name: title }, "", id);
       const file = await this.plugin.newEncounterNote(title, body);
+      this.created({ kind: "encounter", path: file.path, id, name: title });
+      this.close();
       new Notice(`Encounter note created: ${file.path}`);
     } else {
       const text = this.plugin.initiativeCardText(spec);
+      this.created({ kind: "initiative", text, name: spec.name || "" });
       this.close();
-      new CopyTextModal(this.app, "Initiative tracker", "Copy this into the note where the fight happens. It shows as a prepared encounter with a Roll Initiative button.", text).open();
+      if (!this.opts.returnText) new CopyTextModal(this.app, "Initiative tracker", "Copy this into the note where the fight happens. It shows as a prepared encounter with a Roll Initiative button.", text).open();
     }
   }
 }
@@ -3476,6 +3544,8 @@ class CopyTextModal extends Modal {
 // ---------------------------------------------------------------------------
 
 const PLAYER_BLOCK = "roll-initiative-players";
+/** roll-initiative:change payload when no fight is active. */
+const EMPTY_STATE = () => ({ sourcePath: null, id: null, name: "", round: 0, running: false, ended: false, current: null, next: null, combatants: [], cleared: true });
 const SCREEN_PLUGIN_ID = "ttrpg-tools-screen";
 
 /** Draw the players' view of a session into `el`. Pure DOM, no controls. */
@@ -3891,7 +3961,7 @@ class AtlasLink {
       if (fresh.length === 1) {
         // one token joins the running fight
         const spec = this.specFromTokens(toJson(fresh), "");
-        const lines = this.plugin.encounterLines(await this.plugin.resolveEncounter(spec, session.sourcePath));
+        const lines = await this.plugin.planLines(await this.plugin.resolveEncounter(spec, session.sourcePath), session.sourcePath);
         for (const l of lines) await session.addFromText(l);
         new Notice(`Added ${spec.players[0] ? spec.players[0].name : (spec.creatures[0] || {}).name || "a token"} from Atlas to the fight`);
         return;
@@ -4303,6 +4373,7 @@ class InitiativeSettingTab extends PluginSettingTab {
 // Plugin
 // ---------------------------------------------------------------------------
 
+const API_VERSION = "1.5.0";
 const TEMPLATE = "```" + BLOCK + "\nname New encounter\nparty\n2x [[Goblin Warrior]]\n```\n";
 const ENCOUNTER_TEMPLATE = "```" + ENCOUNTER_BLOCK + "\n```\n";
 
@@ -4389,11 +4460,41 @@ class RollInitiativePlugin extends Plugin {
 
     this.addSettingTab(new InitiativeSettingTab(this.app, this));
 
-    // Small public API for other plugins / scripts.
-    this.api = {
+    this.api = this.buildApi();
+  }
+
+  /** Public API for other plugins / scripts (see README "API for other plugins"). */
+  buildApi() {
+    const target = (t) => (t && t.sourcePath ? { sourcePath: t.sourcePath, id: t.id } : null);
+    return {
+      version: (this.manifest && this.manifest.version) || API_VERSION,
       getActive: () => this.settings.active,
       next: () => this.withActive((s) => s.step(1)),
       previous: () => this.withActive((s) => s.step(-1)),
+      getState: async (sourcePath, id) => {
+        const s = await this.findSession(sourcePath ? { sourcePath, id } : null);
+        return s ? this.stateOf(s) : null;
+      },
+      newCombat: (options = {}) => this.newCombat(options),
+      addCombatant: async (line, t) => {
+        const s = await this.findSession(target(t));
+        if (!s || !String(line || "").trim()) return false;
+        return (await s.addFromText(String(line))) > 0;
+      },
+      setRoller: (roller) => this.setRoller(roller),
+      rollInitiative: async (t) => {
+        const s = await this.findSession(target(t));
+        if (!s) return false;
+        await this.startRoll(s);
+        return true;
+      },
+      showOnPlayerScreen: () => this.showOnPlayerScreen(),
+      endCombat: async (t) => {
+        const s = await this.findSession(target(t));
+        if (!s) return false;
+        await s.endCombat();
+        return true;
+      },
     };
   }
 
@@ -4413,6 +4514,81 @@ class RollInitiativePlugin extends Plugin {
   }
   initRoll() {
     return Math.floor(Math.random() * this.sys.initDie) + 1;
+  }
+
+  // ---- dice hook (api.setRoller): other plugins can make our rolls ----
+
+  /** roller: { rollMany(requests) => Promise<number[]> } or null. */
+  setRoller(roller) {
+    this.roller = roller && typeof roller.rollMany === "function" ? roller : null;
+  }
+
+  /** "1d20+3" for an initiative roll with modifier `mod`. */
+  initFormula(mod) {
+    return `1d${this.sys.initDie}${mod ? signed(mod) : ""}`;
+  }
+
+  initRequest(name, mod, session) {
+    return { formula: this.initFormula(mod), label: name, kind: "initiative", sourcePath: session ? session.sourcePath : "", id: session ? session.enc.id || "" : "", mod: mod || 0 };
+  }
+
+  /** Roll a batch of dice: through the external roller when one is set
+   *  (one call for the whole batch), else - or if it fails, returns junk or
+   *  takes longer than 15 s - with the internal dice exactly as before. */
+  async rollMany(requests) {
+    if (!requests || !requests.length) return [];
+    const internal = () => requests.map((r) => (r.kind === "initiative" ? this.initRoll() + (r.mod || 0) : rollDice(r.formula) ?? 0));
+    const roller = this.roller;
+    if (!roller) return internal();
+    const pub = requests.map((r) => ({ formula: r.formula, label: r.label, kind: r.kind, sourcePath: r.sourcePath, id: r.id }));
+    let timer = null;
+    try {
+      const timeout = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error("roller timed out")), this.rollerTimeout || 15000); });
+      const out = await Promise.race([Promise.resolve().then(() => roller.rollMany(pub)), timeout]);
+      if (!Array.isArray(out) || out.length !== requests.length || !out.every((n) => typeof n === "number" && Number.isFinite(n))) {
+        console.warn("Roll for Initiative: external roller returned unusable values - rolling internally", out);
+        return internal();
+      }
+      return out.map((n) => Math.round(n));
+    } catch (e) {
+      console.warn("Roll for Initiative: external roller failed - rolling internally", e);
+      return internal();
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  /** One initiative roll (single "Roll +X" buttons). */
+  async rollInitFor(name, mod, session) {
+    return (await this.rollMany([this.initRequest(name, mod, session)]))[0];
+  }
+
+  /** Roll counts (2d4 goblins) and per-creature HP (Roll for HP) for an
+   *  encounter plan before its block lines are written - HP as one batch. */
+  async prepareRolls(plan, sourcePath = "") {
+    const reqs = [];
+    const slots = [];
+    for (const c of plan.creatures) {
+      c._n = c.countDice ? rollDice(c.countDice) || 1 : c.count;
+      c._hp = null;
+      const hd = c.stats && c.stats.hitDice;
+      if (plan.rollHP && hd && c._n && !this.groupingOf(c, c._n) && rollDice(hd) !== undefined) {
+        c._hp = [];
+        for (let i = 1; i <= c._n; i++) {
+          slots.push([c, i - 1]);
+          reqs.push({ formula: String(hd).replace(/\s+/g, ""), label: c._n > 1 ? `${c.name} ${i}` : c.name, kind: "hp", sourcePath, id: "" });
+        }
+      }
+    }
+    const vals = await this.rollMany(reqs);
+    slots.forEach(([c, i], k) => { c._hp[i] = vals[k]; });
+    return plan;
+  }
+
+  /** Block lines for a plan, with its dice rolled first. */
+  async planLines(plan, sourcePath = "") {
+    await this.prepareRolls(plan, sourcePath);
+    return this.encounterLines(plan);
   }
   isNpc(file) {
     const folder = folderPath(this.settings.npcFolder);
@@ -4456,18 +4632,72 @@ class RollInitiativePlugin extends Plugin {
 
   announce(session) {
     this.lastSession = session;
-    const cur = session.enc.combatants.find((c) => c.current);
-    this.app.workspace.trigger("roll-initiative:change", {
+    this.app.workspace.trigger("roll-initiative:change", this.stateOf(session));
+  }
+
+  /** Public state of a fight (api.getState and the roll-initiative:change event). */
+  stateOf(session) {
+    const enc = session.enc;
+    const cur = enc.combatants.find((c) => c.current);
+    const nextC = this.nextActor(session);
+    return {
       sourcePath: session.sourcePath,
-      id: session.enc.id,
-      name: session.enc.name,
-      round: session.enc.round,
+      id: enc.id || null,
+      name: enc.name || "",
+      round: enc.round || 0,
+      running: session.isRunning(),
+      ended: !!enc.ended,
       current: cur ? cur.name : null,
-      combatants: session.enc.combatants.map((c) => {
-        const s = session.stat(c);
-        return { name: c.name, link: c.link, init: c.init, hp: s.hp, maxHp: s.maxHp, ac: s.ac, player: c.player, live: s.live, conditions: (s.conditions || []).map((x) => x.name) };
+      next: nextC ? nextC.name : null,
+      combatants: enc.combatants.map((c) => {
+        const st = session.stat(c);
+        const r = session.r(c);
+        const d = session.disp(c);
+        return {
+          name: c.name,
+          link: r.path || (r.file && r.file.path) || c.link || null,
+          init: c.init ?? null,
+          hp: st.hp ?? null,
+          maxHp: st.maxHp ?? null,
+          temp: st.temp || 0,
+          ac: st.ac ?? null,
+          player: !!c.player,
+          live: !!st.live,
+          conditions: (st.conditions || []).map((x) => x.name),
+          disp: d === "pc" ? "ally" : d,
+          hidden: !!c.hidden,
+          off: !!c.off,
+          current: !!c.current,
+          group: st.group ? { size: st.group, alive: st.alive, each: st.each ?? null } : null,
+        };
       }),
-    });
+    };
+  }
+
+  /** Who acts after the current combatant (skips those who can't act). */
+  nextActor(session) {
+    if (!session.isRunning()) return null;
+    const list = session.enc.combatants;
+    if (!list.length) return null;
+    const i = list.findIndex((c) => c.current);
+    for (let k = 1; k <= list.length; k++) {
+      const c = list[((i < 0 ? -1 : i) + k + list.length) % list.length];
+      if (c !== list[i] && session.canAct(c)) return c;
+    }
+    return null;
+  }
+
+  /** The active fight, or the one at { sourcePath, id }. */
+  async findSession(target) {
+    if (!target || !target.sourcePath) return this.playerScreenSession();
+    const { sourcePath, id } = target;
+    const match = (x) => x && x.sourcePath === sourcePath && (!id || x.enc.id === id);
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+      if (leaf.view instanceof InitiativeView && match(leaf.view.session)) return leaf.view.session;
+    }
+    if (match(this.lastSession)) return this.lastSession;
+    const s = new Session(this, sourcePath, id ? { id } : { first: true });
+    return (await s.loadFromFile()) ? s : null;
   }
 
   /** Cyberpunk RED: vault notes with `type: condition` (1. Pravidla/Stavy). */
@@ -4541,6 +4771,12 @@ class RollInitiativePlugin extends Plugin {
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
       if (leaf.view instanceof InitiativeView) await leaf.view.load();
     }
+    // tell listeners which fight is active now
+    try {
+      const session = ref ? await this.findSession({ sourcePath: ref.path, id: ref.id }) : null;
+      if (session) this.announce(session);
+      else this.app.workspace.trigger("roll-initiative:change", EMPTY_STATE());
+    } catch (e) { /* listeners must never break the switch */ }
   }
 
   async openInSidebar(session, focus = true) {
@@ -4668,6 +4904,14 @@ class RollInitiativePlugin extends Plugin {
     return plan;
   }
 
+  /** api.newCombat: open the New combat window; resolves with what was made, or null. */
+  newCombat(options = {}) {
+    return new Promise((resolve) => {
+      const kind = options.kind === "encounter" || options.kind === "initiative" ? options.kind : null;
+      new CombatWizardModal(this, kind, { players: options.players, returnText: true, onDone: resolve }).open();
+    });
+  }
+
   /** The fight the player screen shows: the active one (the GM's live copy if open). */
   async playerScreenSession() {
     const a = this.settings.active;
@@ -4722,11 +4966,12 @@ class RollInitiativePlugin extends Plugin {
 
   /** Full combat note text: the whole fight as a roll-initiative tracker
    *  (every player and creature on its own row, ready to roll). */
-  async encounterNoteBody(spec, sourcePath = "") {
+  async encounterNoteBody(spec, sourcePath = "", id = "") {
     const plan = await this.resolveEncounter(spec, sourcePath);
     const lines = [];
     if (spec.name) lines.push(`name ${spec.name}`);
-    lines.push(...this.encounterLines(plan));
+    if (id) lines.push(`id ${id}`);
+    lines.push(...(await this.planLines(plan, sourcePath)));
     return "```" + BLOCK + "\n" + lines.join("\n") + "\n```\n";
   }
 
@@ -4757,7 +5002,7 @@ class RollInitiativePlugin extends Plugin {
     const lines = [];
     for (const p of plan.players) lines.push(p.link ? `[[${p.link}]] player` : `${p.name} player`);
     for (const c of plan.creatures) {
-      const n = c.countDice ? rollDice(c.countDice) || 1 : c.count;
+      const n = c._n !== undefined ? c._n : c.countDice ? rollDice(c.countDice) || 1 : c.count;
       if (!n) continue;
       const base = c.link ? linkBasename(c.link) : "";
       const grouping = this.groupingOf(c, n);
@@ -4789,7 +5034,7 @@ class RollInitiativePlugin extends Plugin {
           const parts = [];
           if (!c.link || name !== base) parts.push(name);
           if (c.link) parts.push(`[[${c.link}]]`);
-          parts.push(`hp ${rollDice(hd)}`);
+          parts.push(`hp ${c._hp && c._hp[i - 1] !== undefined ? c._hp[i - 1] : rollDice(hd)}`);
           if (c.xp !== undefined) parts.push(`xp ${c.xp}`);
           if (c.hidden) parts.push("hidden");
           if (c.disp && c.disp !== "enemy") parts.push(c.disp);
@@ -4843,7 +5088,7 @@ class RollInitiativePlugin extends Plugin {
     const plan = await this.resolveEncounter(spec, sourcePath);
     const id = randomId();
     const header = [spec.name ? `name ${spec.name}` : "name Encounter", `id ${id}`];
-    const content = `# Roll Initiative\n\n\`\`\`${BLOCK}\n${[...header, ...this.encounterLines(plan)].join("\n")}\n\`\`\`\n`;
+    const content = `# Roll Initiative\n\n\`\`\`${BLOCK}\n${[...header, ...(await this.planLines(plan, path))].join("\n")}\n\`\`\`\n`;
     if (file instanceof TFile) await vault.modify(file, content);
     else {
       const folder = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
@@ -4910,5 +5155,5 @@ module.exports._internals = {
   parseEncounterCreature, parseEncounterSpec, isNpcNote, quoteLinks, serializeEncounterSpec, difficultyWord,
   atlasEncounterToSpec, matchSheet, imageBaseName, AtlasLink,
   SYSTEMS, CyberBridge, cpredHit, cpredWoundConditions, cpredDeathSave, statsFromCyberpunk, cpredInitMod,
-  groupAlive, groupAreaHp, groupChunks, specAddText, folderPath, renderPlayerView, PlayerScreenChild,
+  groupAlive, groupAreaHp, groupChunks, specAddText, folderPath, renderPlayerView, PlayerScreenChild, CombatWizardModal,
 };

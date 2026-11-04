@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.5.0
+**API for other plugins** (`app.plugins.plugins["roll-initiative"].api`)
+
+New calls:
+- `version`
+- `getState(sourcePath?, id?)`: full fight state, including `running`, `ended`, `current`, `next`, and per combatant `disp`, `hidden`, `off`, `temp`, `current` and `group`
+- `newCombat(options?)`: opens the New combat window and resolves with what was created
+- `addCombatant(line, target?)`
+- `rollInitiative(target?)`, `endCombat(target?)`, `showOnPlayerScreen()`
+
+**Dice hook** `setRoller({ rollMany })`
+- Initiative and rolled HP can be rolled by another plugin (e.g. a GM screen's dice tray).
+- Roll-all is sent as one batch, and *Group initiative* is respected.
+- Falls back to the built-in dice on errors, bad values or a 15 s timeout.
+
+**Events**
+- `roll-initiative:change` now carries the full state and also fires when a fight ends or the active fight switches.
+- New `roll-initiative:created` event.
+
+**Other changes**
+- With *Ask players for initiative*, players left blank are rolled in the same batch as the monsters.
+- New encounter notes get their block id right away.
+
+Nothing changes when no other plugin uses the API.
+
 ## 1.4.0
 **Player screen**
 

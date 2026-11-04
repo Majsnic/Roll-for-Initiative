@@ -230,6 +230,99 @@ The **[full guide](docs/GUIDE.md)** covers everything else:
 
 ---
 
+## API for other plugins
+
+Other plugins (for example a GM screen) and scripts can drive Roll for Initiative through `api`:
+
+```js
+const ri = app.plugins.plugins["roll-initiative"]?.api;
+if (!ri) return; // not installed or not enabled
+```
+
+Everything below also works from the developer console (Ctrl/Cmd + Shift + I).
+
+### `ri.version`
+The plugin version as a string, so you can check which calls exist.
+```js
+if (ri.version >= "1.5.0") { /* getState, setRoller, … are available */ }
+```
+
+### `ri.getState(sourcePath?, id?)` → `Promise<state | null>`
+The state of the active fight, or of the block `id` in the note at `sourcePath`. Returns `null` when there's no encounter.
+```js
+const st = await ri.getState();
+// {
+//   sourcePath, id, name, round,
+//   running, ended,
+//   current: "Goblin 1", next: "Dexar",
+//   combatants: [{ name, link, init, hp, maxHp, temp, ac, player, live, conditions: ["Prone"],
+//                  disp: "enemy" | "ally" | "neutral", hidden, off, current,
+//                  group: { size: 20, alive: 14, each: 10 } | null }]
+// }
+```
+- `link` is the creature's note path when it has a note.
+- Player characters report `disp: "ally"` and `player: true`.
+
+### `ri.newCombat(options?)` → `Promise<result | null>`
+Opens the **New combat** window and resolves when the user finishes it, or with `null` if they close it without creating anything.
+```js
+const res = await ri.newCombat({ kind: "encounter", players: ["Party/Dexar.md", "Party/Lyra.md"] });
+// { kind: "encounter", path: "Encounters/Gate.md", id: "k3j9xq", name: "Gate" }
+const card = await ri.newCombat({ kind: "initiative" });
+// { kind: "initiative", text: "```roll-encounter\n…```\n", name: "…" }  (no copy window)
+```
+- `kind`: `"encounter"` or `"initiative"` skips the first step.
+- `players`: note paths (or link text) to pre-fill the party.
+
+### `ri.addCombatant(line, target?)` → `Promise<boolean>`
+Adds creatures to the active fight, or to `target = { sourcePath, id }`, using the block line syntax.
+```js
+await ri.addCombatant("3x [[Imp]]");
+await ri.addCombatant("20 [[Orc]] group");
+await ri.addCombatant("[[Dexar]] player", { sourcePath: "Encounters/Gate.md", id: "k3j9xq" });
+```
+- Stats come from statblocks.
+- In a running fight, the newcomers' initiative is rolled (one batch through the dice hook) and they're sorted into the order.
+- Returns `false` when there's no encounter.
+
+### `ri.setRoller(roller | null)`: dice hook
+Lets another plugin make the tracker's dice rolls, for example to show them in its own dice tray. `roller.rollMany(requests)` gets an array of requests and must resolve to an array of totals in the same order.
+```js
+ri.setRoller({
+  rollMany: async (requests) => {
+    // [{ formula: "1d20+3", label: "Goblin 1", kind: "initiative" | "hp", sourcePath, id }, …]
+    return requests.map(() => 10); // the final totals, modifier included
+  },
+});
+ri.setRoller(null); // back to the built-in dice
+```
+- **What goes through it:**
+  - initiative: Roll initiative, the single "Roll +X" button, the dice button in the player-initiative window, and creatures joining a running fight;
+  - rolled HP: the *Roll monster HP* setting and the encounter card's *Roll for HP*.
+- **Batches:** rolling for everyone sends one `rollMany` call with every request. With *Group initiative* on, there's one request per creature type.
+- **Fallback:** if `rollMany` throws, returns the wrong number of values, returns non-numbers, or takes longer than 15 s, the built-in dice roll instead. Combat never gets stuck.
+
+### Small calls
+```js
+await ri.rollInitiative();                         // same as pressing Roll initiative (active fight)
+await ri.rollInitiative({ sourcePath, id });       // …or a given fight
+await ri.endCombat();                              // same as the End combat command
+await ri.showOnPlayerScreen();                     // same as Show initiative on player screen
+ri.getActive();                                    // { path, id } of the sidebar fight, or null
+ri.next(); ri.previous();                          // next / previous turn
+```
+
+### Events
+```js
+plugin.registerEvent(app.workspace.on("roll-initiative:change", (state) => { /* same shape as getState() */ }));
+plugin.registerEvent(app.workspace.on("roll-initiative:created", (result) => { /* same shape as newCombat() */ }));
+```
+- `roll-initiative:change` fires:
+  - on every change;
+  - when a fight ends (`ended: true`);
+  - when the active fight switches. When no fight is active any more, it fires with `{ cleared: true, combatants: [], … }`.
+- `roll-initiative:created` fires whenever the New combat window creates something, whether it was opened through the API or by hand.
+
 ## Credits
 
 Roll for Initiative stands on the shoulders of these projects. Thank you to their authors.

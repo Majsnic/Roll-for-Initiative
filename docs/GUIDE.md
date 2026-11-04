@@ -193,6 +193,9 @@ Settings → Roll for Initiative → **Game system** switches the rules the plug
 
 ## For other plugins
 
+The full API (`getState`, `newCombat`, `addCombatant`, the dice hook `setRoller`, events) is documented in the README under **API for other plugins**.
+
+
 - `app.workspace.on("roll-initiative:change", (state) => …)` fires on every change (round, current creature, combatants).
 - To refresh the sheet, the plugin fires `dnd-sheet:main-file-changed`, and `dnd-sheet:conditions-changed` (the sheet's Conditions block listens for the latter since this release).
 
