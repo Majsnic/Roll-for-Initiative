@@ -46,23 +46,44 @@ An initiative tracker for [Obsidian](https://obsidian.md) that keeps the whole f
 Large battles stay manageable: a **group** is one row for many identical creatures. They share one initiative and one **HP pool** (HP each × how many).
 
 - **Make a group** in any of these ways:
-  - on an encounter card, click the 👥 button next to a creature with a count above 1;
+  - on an encounter card, click the 👥 button next to a creature with a count above 1 and pick **One group**, **Groups of 10** or a custom size: 50 goblins in groups of 10 = 5 group rows;
   - in the add box, type `40 gob group`;
   - in the block, write `40x [[Goblin Warrior]] group`;
   - in the tracker, right-click creatures of the same kind → **Fight as one group**.
 - **The tag** next to the name shows how many are still standing (`👥 27/40`). That's the pool divided by HP each, rounded up.
+- **Casualties**: when members go down, a red **−3** floats over the group's HP bar for a moment (green **+N** when healing brings them back).
 - **Damage box** for a group:
   - **Damage** comes off the shared pool.
   - **Area** deals the amount to each of **×** targets (empty = everyone standing): *Fireball for 28 on 6 goblins* = 6 goblins down. One member never loses more than its own HP.
   - **−1** drops members (type a number to drop more).
   - **Heal** puts HP back into the pool.
   - **Each** sets HP each and refills the group.
-- **Splitting**: right-click → **Split into individual creatures** turns the survivors back into normal rows. The last one keeps the damage the pool had taken.
+- **Splitting**: right-click → **Split into smaller groups…** (e.g. 22 survivors → groups of 10 = 10/10/2) or **Split into individual creatures**. The last row keeps the damage the pool had taken.
+- **Settings → Armies & minions**:
+  - **Group size** sets the default size of each group;
+  - **Group automatically from** starts big counts as groups;
+  - **Show casualties** turns the floating numbers on or off.
 - **Difficulty** counts every member of the group.
 - **Auto-end** triggers when the pool hits 0.
 - **Cyberpunk RED**: one SP value for the whole group, Body / Head / Direct hits come off the pool, and Area hits each target through body SP.
 
 ![A group of 40 goblins in a fight](docs/screenshots/groups.png)
+
+| 50 goblins in groups of 10 | Casualties after an area attack |
+|---|---|
+| ![Groups of 10 on the encounter card](docs/screenshots/group-card.png) | ![−3 over the HP bar](docs/screenshots/casualty.png) |
+
+### Player screen
+
+Show the fight to your players on a second screen with **[TTRPG Tools – Player Screen](https://github.com/jareika/ttrpg-tools-screen)** by Jareika.
+
+- Click the **monitor** button in the tracker's header (or ⋮ → *Show on player screen*, or run the command *Show initiative on player screen*).
+- The players see the round, the order, whose turn it is, tokens, names, PC / ally / neutral tags, group counts with casualties, health bars, conditions and death saves.
+- They never see HP numbers, AC / SP, any buttons, or creatures you've marked **hidden**. Revealing a creature puts it on their screen.
+- The view is live: every change you make in the tracker shows up there immediately.
+- **Settings → Player screen → Health bars** controls the bars: everyone, player characters only, or nobody.
+
+![The players' view](docs/screenshots/player-screen.png)
 
 ### Cyberpunk RED mode
 
@@ -120,6 +141,25 @@ None of them is required. Without them, type HP and AC into the block yourself.
 ---
 
 ## Quick start
+
+### The fastest way: the ⚔ icon in the left ribbon
+
+Click the **swords icon** in Obsidian's left ribbon. A window asks what you want to prepare:
+
+- **Combat encounter** creates a full encounter note in your **Encounters folder** (Settings). It holds the whole initiative order, with every player and creature on its own row, ready to roll and run.
+- **Initiative tracker** builds a compact prepared encounter with a **Roll Initiative** button and gives you its text with a **Copy and Close** button. Paste it into your adventure or session notes and press the button when the fight starts.
+
+The next step works the same for both:
+1. Name the fight.
+2. Pick the players (a party, chosen characters, or none).
+3. Type creatures (`3 gob` = 3 goblins).
+4. For armies, choose *One by one*, *One group* or *Groups of 10*.
+
+| Choose | Set up |
+|---|---|
+| ![New combat](docs/screenshots/new-combat.png) | ![Setup](docs/screenshots/new-combat-setup.png) |
+
+### By hand
 
 1. Open the command palette (Ctrl/Cmd + P) and run **Roll for Initiative: Insert combat block**. Or create an encounter card with an empty block:
 
@@ -179,6 +219,10 @@ The **[full guide](docs/GUIDE.md)** covers everything else:
 |---|---|
 | Game system | D&D 5e (2024) or Cyberpunk RED |
 | Roll Initiative note | The note every fight is written to (default `Roll Initiative.md`) |
+| Encounters folder | Where the **New encounter note** command creates encounter notes |
+| Group size / Group automatically from | Default group size for armies, and from which count creatures start as a group |
+| Show casualties | Floating −N over a group's HP bar when members go down |
+| Health bars on the player screen | Everyone / player characters only / nobody |
 | Ask players for initiative | Opens a window to type each player's own roll |
 | End combat when all enemies are down | Auto-end (on by default) |
 | Monster / NPC / Players folders | Where to look for creatures, neutral NPCs and (Cyberpunk) player notes |

@@ -96,7 +96,9 @@ creatures:
 ```
 ````
 
-Add `group` to fight a whole count as one row: `- 40: [[Goblin Warrior]], group` (or `group: true` in the long form).
+Add `group` to fight a whole count as one row: `- 40: [[Goblin Warrior]], group` (or `group: true` in the long form). `group 10` splits the count into groups of 10 (`- 50: [[Goblin Warrior]], group 10` = 5 rows), and `single` keeps creatures one by one even when *Group automatically from* would group them.
+
+**New encounter note** (command, settings button, or the tracker's ⋮ menu) creates a note with an empty encounter card in the **Encounters folder** from settings.
 
 `players: [[[Dexar]], [[Brom]]]` or `players: none` work too. Several encounters can share one block, separated by `---`.
 
@@ -209,7 +211,22 @@ A group is one row for many identical creatures. They share initiative and an **
   - **−1** drops members (type a number to drop several).
   - **Heal** puts HP back into the pool.
   - **Each** sets HP each and refills the group.
-- **Split into individual creatures** (right-click) gives every standing member its own row again. The last member carries the pool's damage.
+- **Group sizes:** the 👥 button on a card opens a menu with these options:
+  - **One by one**;
+  - **One group**;
+  - **Groups of 5 / 10 / 20 / 25 / 50**;
+  - **Groups of…** for a custom size.
+
+  With a size set, the button shows that size (`👥 10`).
+- **Settings → Armies & minions:**
+  - **Group size** is the default size when a creature is grouped (empty = everyone in one group);
+  - **Group automatically from** starts counts at least this big as a group;
+  - **Show casualties** floats a red **−N** over a group's HP bar when members go down (green **+N** when they come back).
+- **Splitting** (right-click):
+  - **Split into smaller groups…** divides the survivors into groups of N;
+  - **Split into individual creatures** gives every standing member its own row again.
+
+  Either way, the last row carries the pool's damage.
 - **Difficulty** counts every member. Auto-end triggers when the pool is empty.
 - **Atlas VTT:** live sync leaves group rows out, because a group has no single token.
 - **Cyberpunk RED:**

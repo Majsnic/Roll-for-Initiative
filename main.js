@@ -81,6 +81,11 @@ const DEFAULT_SETTINGS = {
   atlasFolder: "atlas-vtt",
   combatNote: "Roll Initiative.md",
   openCombatNote: true,
+  encounterFolder: "",
+  defaultGroupSize: 0, // 0 = the whole count in one group
+  autoGroupFrom: 0, // 0 = off; otherwise counts this big start as a group
+  showCasualties: true,
+  playerScreenBars: "all", // "all" | "players" | "none"
   party: "",
   active: null, // { path, id }
 };
@@ -102,6 +107,8 @@ const isIntToken = (t) => t !== undefined && /^[+-]?\d+$/.test(t);
 const abilityMod = (score) => Math.floor((score - 10) / 2);
 const linkBasename = (link) => link.split("#")[0].split("^")[0].split("/").pop().replace(/\.md$/i, "");
 const randomId = () => Math.random().toString(36).slice(2, 8);
+/** Folder setting -> vault path: Windows backslashes become "/", no leading/trailing slash. */
+const folderPath = (v) => String(v || "").trim().replace(/\\/g, "/").replace(/\/+/g, "/").replace(/^\/|\/$/g, "");
 const capitalize = (s) => s.replace(/\b\w/g, (ch) => ch.toUpperCase());
 
 function parseCondition(raw) {
@@ -140,6 +147,7 @@ function parseCombatantLine(line) {
   const nameParts = [];
   let count = 1;
   let groupFlag = false;
+  let hpPool = false;
   const c = { name: "", player: false, hidden: false, off: false, conditions, current };
   for (let i = 0; i < tokens.length; i++) {
     const tok = tokens[i];
@@ -166,6 +174,7 @@ function parseCombatantLine(line) {
     else if (low === "hp" && next !== undefined && (m = /^(\d+)(?:\/(\d+))?$/.exec(next))) {
       c.hp = parseInt(m[1], 10);
       c.maxHp = m[2] !== undefined ? parseInt(m[2], 10) : c.hp;
+      hpPool = m[2] !== undefined;
       i++;
     } else if (low === "temp" && next !== undefined && /^\d+$/.test(next)) { c.temp = parseInt(next, 10); i++; }
     else if (low === "ac" && next !== undefined && /^\d+$/.test(next)) { c.ac = parseInt(next, 10); i++; }
@@ -186,7 +195,10 @@ function parseCombatantLine(line) {
   if (groupFlag) {
     // one row for the whole group: `20x [[Goblin]] group` or `[[Goblin]] group 20`
     c.group = Math.max(1, Math.min(c.group || count, 999));
-    if (c.each === undefined && c.hp !== undefined) {
+    if (c.each === undefined && c.hp !== undefined && hpPool) {
+      // `hp 155/200` on a group is the pool: work out HP each
+      c.each = Math.max(1, Math.round(c.maxHp / c.group));
+    } else if (c.each === undefined && c.hp !== undefined) {
       // hand-typed `hp 7` on a group means each member's HP
       c.each = c.maxHp ?? c.hp;
       delete c.hp;
@@ -556,6 +568,45 @@ function damageMonster(c, amount) {
 }
 // ---- groups (minions / mobs): N identical creatures in one row, one HP pool ----
 const GROUP_WORDS = ["group", "mob", "minions", "horde"];
+const GROUP_FLAG = /^(group|mob|minions|horde)(?:\s+(?:of\s+)?(\d+))?$/;
+const SINGLE_WORDS = ["single", "individual", "individuals", "one by one"];
+
+/** Add one typed add-box line ("3x [[Goblin]]", "[[Dexar]] player",
+ *  "20 [[Orc]] group") to a roll-encounter spec. Returns "player",
+ *  "creature" or null. */
+function specAddText(spec, text) {
+  const parsed = parseCombatantLine(text);
+  if (!parsed.length) return null;
+  const first = parsed[0];
+  if (first.player) {
+    spec.playersMode = "list";
+    const p = first.link ? { name: first.name, link: first.link, isLink: true } : { name: first.name, isLink: false };
+    if (!spec.players.some((x) => (x.link || x.name) === (p.link || p.name))) spec.players.push(p);
+    return "player";
+  }
+  const name = first.name.replace(/\s+\d+$/, "");
+  const entry = first.link ? { name: linkBasename(first.link), link: first.link, isLink: true } : { name, isLink: false };
+  entry.count = first.group || parsed.length;
+  if (first.group) entry.group = true;
+  for (const k of ["hp", "ac", "mod", "xp"]) if (first[k] !== undefined) entry[k] = first[k];
+  if (first.group && first.each !== undefined && entry.hp === undefined) entry.hp = first.each;
+  if (first.hidden) entry.hidden = true;
+  if (first.disp) entry.disp = first.disp;
+  const same = spec.creatures.find((x) => (x.link || x.name) === (entry.link || entry.name) && !x.hp && !entry.hp);
+  if (same) {
+    same.count = Math.min(999, (same.count || 1) + entry.count);
+    if (entry.group && same.group === undefined) same.group = true;
+  } else spec.creatures.push(entry);
+  return "creature";
+}
+
+/** Split `n` creatures into groups of `size` (the last one takes the rest). */
+function groupChunks(n, size) {
+  if (!size || size >= n) return [n];
+  const out = [];
+  for (let left = n; left > 0; left -= size) out.push(Math.min(size, left));
+  return out;
+}
 
 /** How many members are still standing: the pool divided by HP each, rounded up. */
 function groupAlive(hp, each, size) {
@@ -780,7 +831,7 @@ class CyberBridge {
   }
   get sheetPlugin() { return null; }
   get dataFolder() { return ""; }
-  playersFolder() { return (this.plugin.settings.playersFolder || "").replace(/\/+$/, ""); }
+  playersFolder() { return folderPath(this.plugin.settings.playersFolder); }
   isSheet(fm, file) {
     if (!fm) return false;
     const type = String(fm.type || "").toLowerCase();
@@ -1506,6 +1557,7 @@ class Session {
     else if (mode === "area") c.hp = groupAreaHp(c.hp, s.each, s.group, amount, targets);
     else c.hp = Math.max(0, c.hp - amount);
     const after = groupAlive(c.hp, s.each, s.group);
+    if (after !== before) this.plugin.flashCasualties(this, c, after - before);
     this.checkAutoEnd();
     await this.commit();
     const fell = before - after;
@@ -1522,12 +1574,34 @@ class Session {
     await this.commit();
   }
 
-  /** Split a group back into one row per standing member. */
-  async splitGroup(c) {
+  /** Split a group: one row per standing member, or (size > 1) smaller
+   *  groups of `size`. The last row carries the damage the pool has taken. */
+  async splitGroup(c, size = 1) {
     const s = this.stat(c);
     const i = this.enc.combatants.indexOf(c);
     if (i < 0 || !this.isGroup(c)) return;
     const base = c.name.replace(/\s+\d+$/, "");
+    if (size > 1 && s.each && c.hp !== undefined) {
+      const chunks = groupChunks(s.alive || 0, size);
+      if (chunks.length < 2) return;
+      let missing = Math.max(0, (s.alive || 0) * s.each - c.hp);
+      const rows = chunks.map((k, idx) => {
+        const g = { ...c, name: `${base} ${idx + 1}`, conditions: c.conditions.map((x) => ({ ...x })), current: c.current && idx === 0, group: k, each: s.each };
+        g.maxHp = k * s.each;
+        g.hp = g.maxHp;
+        if (k === 1) { delete g.group; delete g.each; }
+        return g;
+      });
+      for (let k = rows.length - 1; k >= 0 && missing > 0; k--) {
+        const take = Math.min(missing, rows[k].hp - 1);
+        rows[k].hp -= take;
+        missing -= take;
+      }
+      this.enc.combatants.splice(i, 1, ...rows);
+      await this.resolveAll();
+      await this.commit();
+      return;
+    }
     const n = s.alive || 0;
     const members = [];
     for (let k = 1; k <= n; k++) {
@@ -1927,6 +2001,7 @@ class EncounterUI {
       this.button(tools, "square", "", "ri-end", () => session.endCombat(), "End combat");
     }
     if (!this.opts.sidebar) this.button(tools, "panel-right", "", "ri-side", () => this.plugin.openInSidebar(session), "Run in sidebar");
+    if (this.plugin.screenPlugin) this.button(tools, "monitor-up", "", "ri-screen", () => this.plugin.showOnPlayerScreen(session), "Show on player screen (no HP or AC)");
     this.button(tools, "more-vertical", "", "ri-menu", (e) => this.encounterMenu(e), "Encounter options");
 
     // A block that isn't the fight running in the sidebar says so - its
@@ -2070,6 +2145,13 @@ class EncounterUI {
       setIcon(g.createSpan({ cls: "ri-tag-icon" }), "users");
       g.createSpan({ text: `${s.alive}/${s.group}` });
       g.title = `Group of ${s.group}${s.each ? `, ${s.each} HP each` : ""}: ${s.alive} still standing`;
+      // "-3" floats up from the count when members go down
+      const fl = this.plugin.casualtyFor(this.session, c);
+      if (fl) {
+        g.addClass(fl.delta < 0 ? "is-hit" : "is-healed");
+        const tag = g.createSpan({ cls: `ri-casualty ${fl.delta < 0 ? "is-loss" : "is-gain"}`, text: fl.delta < 0 ? `−${-fl.delta}` : `+${fl.delta}` });
+        tag.title = fl.delta < 0 ? `${-fl.delta} down` : `${fl.delta} back up`;
+      }
     }
     if (s.sp) {
       const sp = top.createSpan({ cls: "ri-ac ri-sp" });
@@ -2281,6 +2363,12 @@ class EncounterUI {
     }));
     if (!c.player) menu.addItem((i) => i.setTitle("Duplicate").setIcon("copy").onClick(() => this.session.duplicate(c)));
     if (this.session.isGroup(c)) {
+      menu.addItem((i) => i.setTitle("Split into smaller groups…").setIcon("layout-grid").onClick(() => {
+        new TextPromptModal(this.app, `${c.name}: creatures per group`, "", (v) => {
+          const x = parseInt(v, 10);
+          if (Number.isFinite(x) && x >= 1) this.session.splitGroup(c, x);
+        }).open();
+      }));
       menu.addItem((i) => i.setTitle("Split into individual creatures").setIcon("users").onClick(() => this.session.splitGroup(c)));
     } else {
       const same = this.session.mergeCandidates(c);
@@ -2300,6 +2388,8 @@ class EncounterUI {
     menu.addItem((i) => i.setTitle("Ask players for initiative").setIcon("dices").onClick(() => new PlayerInitModal(this.plugin, s, (v) => s.rollInitiative(v)).open()));
     menu.addItem((i) => i.setTitle("Remove defeated monsters").setIcon("skull").onClick(() => s.clearDefeated()));
     menu.addItem((i) => i.setTitle("Sort by initiative").setIcon("arrow-down-wide-narrow").onClick(() => { sortKeepCurrent(s.enc, (c) => s.stat(c)); s.commit(); }));
+    menu.addItem((i) => i.setTitle("Show on player screen").setIcon("monitor-up").onClick(() => this.plugin.showOnPlayerScreen(s)));
+    menu.addItem((i) => i.setTitle("New combat…").setIcon("file-plus").onClick(() => new CombatWizardModal(this.plugin).open()));
     menu.addItem((i) => i.setTitle("Reload stats from notes").setIcon("refresh-cw").onClick(async () => {
       this.plugin.resolver.cache.clear();
       await s.resolveAll();
@@ -2438,7 +2528,7 @@ class CreatureSuggestModal extends FuzzySuggestModal {
     this.plugin = plugin;
     this.onPick = onPick;
     this.setPlaceholder("Monster or character…");
-    const folder = plugin.settings.monsterFolder || plugin.bridge.monsterFolder();
+    const folder = folderPath(plugin.settings.monsterFolder || plugin.bridge.monsterFolder());
     this.items = [];
     for (const f of this.app.vault.getMarkdownFiles()) {
       const fm = (this.app.metadataCache.getFileCache(f) || {}).frontmatter;
@@ -2697,8 +2787,15 @@ function parseEncounterCreature(entry) {
     if (low.includes("hidden")) out.hidden = true;
     if (low.some((x) => x === "ally" || x === "friend" || x === "friendly")) out.disp = "ally";
     if (low.includes("neutral")) out.disp = "neutral";
-    if (low.some((x) => GROUP_WORDS.includes(x))) out.group = true;
-    return arr.filter((x) => !["hidden", "ally", "friend", "friendly", "neutral", ...GROUP_WORDS].includes(String(x).trim().toLowerCase()));
+    for (const x of low) {
+      const gm = GROUP_FLAG.exec(x);
+      if (gm) out.group = gm[2] ? Math.max(1, parseInt(gm[2], 10)) : true;
+      if (SINGLE_WORDS.includes(x)) out.group = false;
+    }
+    return arr.filter((x) => {
+      const t = String(x).trim().toLowerCase();
+      return !["hidden", "ally", "friend", "friendly", "neutral", ...SINGLE_WORDS].includes(t) && !GROUP_FLAG.test(t);
+    });
   };
   if (typeof val === "string") {
     const parts = flags(val.split(/,\s*/));
@@ -2722,7 +2819,10 @@ function parseEncounterCreature(entry) {
     if (val.hidden) out.hidden = true;
     if (val.ally || val.friend || val.friendly) out.disp = "ally";
     if (val.neutral) out.disp = "neutral";
-    if (val.group || val.mob || val.minions) out.group = true;
+    const gv = val.group ?? val.mob ?? val.minions;
+    if (gv === false) out.group = false;
+    else if (typeof gv === "number" && gv > 0) out.group = Math.round(gv);
+    else if (gv) out.group = true;
   }
   if (out.display) out.name = out.display;
   if (!out.name && !out.link) return null;
@@ -2788,7 +2888,8 @@ function serializeEncounterSpec(spec) {
         if (c.hidden) out.push("    hidden: true");
         if (c.disp === "ally") out.push("    ally: true");
         if (c.disp === "neutral") out.push("    neutral: true");
-        if (c.group) out.push("    group: true");
+        if (c.group === false) out.push("    group: false");
+        else if (c.group) out.push(`    group: ${c.group === true ? "true" : c.group}`);
         continue;
       }
       const extra = [];
@@ -2797,7 +2898,8 @@ function serializeEncounterSpec(spec) {
       for (const n of nums) extra.push(n === undefined ? "" : String(n));
       if (c.hidden) extra.push("hidden");
       if (c.disp === "ally" || c.disp === "neutral") extra.push(c.disp);
-      if (c.group) extra.push("group");
+      if (c.group === false) extra.push("single");
+      else if (c.group) extra.push(c.group === true ? "group" : `group ${c.group}`);
       out.push(`  - ${c.countDice || c.count}: ${[base, ...extra].join(", ")}`);
     }
   }
@@ -3041,14 +3143,37 @@ class EncounterCard extends MarkdownRenderChild {
       };
       if (c.hidden) setIcon(a.createSpan({ cls: "ri-tag is-icon ri-enc-hidden" }), "eye-off");
       // ally / neutral is shown by the token's rim colour (keeps rows compact)
-      if (c.disp === "ally" || c.disp === "neutral") a.title = c.disp === "ally" ? "Ally" : "Neutral";
+      a.title = c.disp === "ally" ? `${c.name} (ally)` : c.disp === "neutral" ? `${c.name} (neutral)` : c.name;
       if ((c.count || 0) > 1 || c.countDice) {
-        // fight them as one row with a shared HP pool (armies, minions)
-        const g = li.createEl("button", { cls: `ri-enc-group${sc.group ? " is-on" : ""}` });
+        // armies / minions: one row per group with a shared HP pool
+        const n = c.count || 2;
+        const size = this.plugin.groupingOf(c, n);
+        const g = li.createEl("button", { cls: `ri-enc-group${size ? " is-on" : ""}` });
         setIcon(g.createSpan({ cls: "ri-enc-group-icon" }), "users");
-        g.setAttr("aria-label", sc.group ? `${c.name}: one group (click to run them one by one)` : `Run ${c.name} as one group`);
-        g.title = sc.group ? "One row, one shared HP pool. Click to run them one by one." : "Run them as one group: one row and a shared HP pool, for armies and minions";
-        g.onclick = (e) => { e.preventDefault(); sc.group = !sc.group; save(); };
+        if (size && size < n) { g.addClass("has-size"); g.createSpan({ cls: "ri-enc-group-size", text: String(size) }); }
+        const chunks = size ? groupChunks(n, size) : [];
+        const what = !size ? "one by one" : chunks.length === 1 ? `one group of ${n}` : `${chunks.length} groups of ${size}${chunks[chunks.length - 1] !== size ? ` (last ${chunks[chunks.length - 1]})` : ""}`;
+        g.setAttr("aria-label", `${c.name}: ${what}`);
+        g.title = `${c.name}: ${what}. Click to change.`;
+        g.onclick = (e) => {
+          e.preventDefault();
+          const set = (v) => { sc.group = v; save(); };
+          const menu = new Menu();
+          menu.addItem((i) => i.setTitle("One by one (a row each)").setIcon("user").setChecked(!size).onClick(() => set(false)));
+          menu.addItem((i) => i.setTitle(`One group of ${n}`).setIcon("users").setChecked(size === n).onClick(() => set(true)));
+          const sizes = [5, 10, 20, 25, 50].filter((x) => x < n && x >= 2);
+          for (const x of sizes) {
+            const k = groupChunks(n, x).length;
+            menu.addItem((i) => i.setTitle(`Groups of ${x} (${k} groups)`).setIcon("layout-grid").setChecked(size === x && x < n).onClick(() => set(x)));
+          }
+          menu.addItem((i) => i.setTitle("Groups of… (custom size)").setIcon("pencil").onClick(() => {
+            new TextPromptModal(this.app, `${c.name}: creatures per group`, size && size < n ? String(size) : "", (v) => {
+              const x = parseInt(v, 10);
+              if (Number.isFinite(x) && x >= 1) set(x >= n ? true : x);
+            }).open();
+          }));
+          menu.showAtMouseEvent(e);
+        };
       }
       // HP / AC straight from the statblock (typed numbers only for
       // creatures that have no statblock) + CR, in fixed-width columns.
@@ -3113,6 +3238,388 @@ class EncounterCard extends MarkdownRenderChild {
       e.preventDefault();
       this.plugin.startEncounter(spec, this.ctx.sourcePath);
     };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// New combat wizard (left ribbon): encounter note or initiative text
+// ---------------------------------------------------------------------------
+
+const WIZARD_KINDS = {
+  encounter: {
+    title: "Combat encounter",
+    icon: "swords",
+    desc: "A full encounter note in your encounters folder. It shows the whole initiative order: every player and creature on its own row, with HP, conditions and turns. Use it for a fight you're about to run.",
+    button: "Create encounter note",
+  },
+  initiative: {
+    title: "Initiative tracker",
+    icon: "dices",
+    desc: "A compact, prepared encounter (players and creatures) with a Roll Initiative button, as text you paste into any note: your adventure, a location, a session plan. Press the button when the fight starts.",
+    button: "Create initiative text",
+  },
+};
+
+class CombatWizardModal extends Modal {
+  constructor(plugin, kind = null) {
+    super(plugin.app);
+    this.plugin = plugin;
+    this.kind = kind;
+    const first = plugin.partyGroupNames()[0];
+    this.spec = { name: "", party: first || "", playersMode: first ? "party" : "none", players: [], creatures: [], rollHP: false };
+  }
+  onOpen() {
+    this.modalEl.addClass("ri-wizard-modal");
+    this.draw();
+  }
+  onClose() { this.contentEl.empty(); }
+
+  drawChoice(el) {
+    this.titleEl.setText("New combat");
+    el.createEl("p", { cls: "ri-wiz-lead", text: "What do you want to prepare?" });
+    const opts = el.createDiv({ cls: "ri-wiz-options" });
+    for (const [key, k] of Object.entries(WIZARD_KINDS)) {
+      const b = opts.createEl("button", { cls: `ri-wiz-option is-${key}` });
+      setIcon(b.createDiv({ cls: "ri-wiz-option-icon" }), k.icon);
+      const t = b.createDiv({ cls: "ri-wiz-option-text" });
+      t.createDiv({ cls: "ri-wiz-option-title", text: k.title });
+      t.createDiv({ cls: "ri-wiz-option-desc", text: k.desc });
+      b.onclick = (e) => { e.preventDefault(); this.kind = key; this.draw(); };
+    }
+    const foot = el.createDiv({ cls: "ri-wiz-foot" });
+    const side = foot.createEl("button", { cls: "ri-wiz-link", text: "Open the initiative sidebar instead" });
+    side.onclick = (e) => { e.preventDefault(); this.close(); this.plugin.revealView(); };
+  }
+
+  drawSetup(el) {
+    const k = WIZARD_KINDS[this.kind];
+    const spec = this.spec;
+    this.titleEl.setText(k.title);
+    el.createEl("p", { cls: "ri-wiz-lead", text: k.desc });
+
+    // name
+    const nameRow = el.createDiv({ cls: "ri-wiz-row" });
+    nameRow.createEl("label", { cls: "ri-wiz-label", text: "Name" });
+    const name = nameRow.createEl("input", { type: "text", cls: "ri-wiz-name", attr: { placeholder: "Ambush at the old mill" } });
+    name.value = spec.name;
+    name.addEventListener("input", () => { spec.name = name.value.trim(); });
+
+    // players
+    const pRow = el.createDiv({ cls: "ri-wiz-row" });
+    pRow.createEl("label", { cls: "ri-wiz-label", text: "Players" });
+    const pBox = pRow.createDiv({ cls: "ri-wiz-field" });
+    const sel = pBox.createEl("select", { cls: "dropdown" });
+    for (const g of this.plugin.partyGroupNames()) sel.createEl("option", { text: g, value: `party:${g}` });
+    sel.createEl("option", { text: "Choose characters…", value: "list" });
+    sel.createEl("option", { text: "No players", value: "none" });
+    sel.value = spec.playersMode === "party" ? `party:${spec.party}` : spec.playersMode === "list" ? "list" : "none";
+    sel.onchange = () => {
+      const v = sel.value;
+      if (v.startsWith("party:")) { spec.playersMode = "party"; spec.party = v.slice(6); }
+      else { spec.playersMode = v; spec.party = ""; }
+      this.draw();
+    };
+    if (spec.playersMode === "list") {
+      const chips = pBox.createDiv({ cls: "ri-wiz-chips" });
+      spec.players.forEach((p, i) => {
+        const chip = chips.createSpan({ cls: "ri-wiz-chip", text: p.name });
+        const x = chip.createEl("button", { cls: "ri-wiz-chip-x", text: "×" });
+        x.setAttr("aria-label", `Remove ${p.name}`);
+        x.onclick = (e) => { e.preventDefault(); spec.players.splice(i, 1); this.draw(); };
+      });
+      const pin = pBox.createEl("input", { type: "text", cls: "ri-wiz-add", attr: { placeholder: "Add character… (type a name)" } });
+      const addP = (text) => { if (specAddText(spec, /\bplayer\b|\bpc\b/i.test(text) ? text : `${text} player`)) this.draw(true); };
+      if (typeof obsidian.AbstractInputSuggest === "function") new CombatantSuggest(this.plugin, pin, addP, "pc");
+      else pin.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addP(pin.value.trim()); } });
+    }
+
+    // creatures
+    const cRow = el.createDiv({ cls: "ri-wiz-row is-creatures" });
+    cRow.createEl("label", { cls: "ri-wiz-label", text: this.plugin.sys.id === "cpred" ? "Enemies" : "Creatures" });
+    const cBox = cRow.createDiv({ cls: "ri-wiz-field" });
+    const list = cBox.createDiv({ cls: "ri-wiz-list" });
+    if (!spec.creatures.length) list.createDiv({ cls: "ri-wiz-empty", text: "Nothing yet - type below. 3 gob = 3 goblins, 40 gob group = an army." });
+    spec.creatures.forEach((c, i) => {
+      const row = list.createDiv({ cls: "ri-wiz-crow" });
+      const minus = row.createEl("button", { cls: "ri-wiz-step", text: "−" });
+      row.createSpan({ cls: "ri-wiz-count", text: String(c.count || 1) });
+      const plus = row.createEl("button", { cls: "ri-wiz-step", text: "+" });
+      minus.setAttr("aria-label", `One less ${c.name}`);
+      plus.setAttr("aria-label", `One more ${c.name}`);
+      minus.onclick = (e) => { e.preventDefault(); if ((c.count || 1) <= 1) spec.creatures.splice(i, 1); else c.count -= 1; this.draw(); };
+      plus.onclick = (e) => { e.preventDefault(); c.count = Math.min(999, (c.count || 1) + 1); this.draw(); };
+      row.createSpan({ cls: "ri-wiz-cname", text: c.name });
+      if ((c.count || 1) > 1) {
+        // armies: one by one, one group, or groups of N
+        const n = c.count;
+        const size = this.plugin.groupingOf(c, n);
+        const gs = row.createEl("select", { cls: "dropdown ri-wiz-group" });
+        gs.setAttr("aria-label", `How to run ${c.name}`);
+        gs.createEl("option", { text: "One by one", value: "single" });
+        gs.createEl("option", { text: `One group of ${n}`, value: "all" });
+        for (const x of [5, 10, 20, 25, 50].filter((v) => v < n && v >= 2)) gs.createEl("option", { text: `Groups of ${x} (${groupChunks(n, x).length})`, value: String(x) });
+        if (size && size < n && ![5, 10, 20, 25, 50].includes(size)) gs.createEl("option", { text: `Groups of ${size} (${groupChunks(n, size).length})`, value: String(size) });
+        gs.value = !size ? "single" : size >= n ? "all" : String(size);
+        gs.onchange = () => {
+          const v = gs.value;
+          c.group = v === "single" ? false : v === "all" ? true : parseInt(v, 10);
+          this.draw();
+        };
+      }
+      const x = row.createEl("button", { cls: "ri-wiz-x", text: "×" });
+      x.setAttr("aria-label", `Remove ${c.name}`);
+      x.onclick = (e) => { e.preventDefault(); spec.creatures.splice(i, 1); this.draw(); };
+    });
+    const cin = cBox.createEl("input", { type: "text", cls: "ri-wiz-add", attr: { placeholder: this.plugin.sys.id === "cpred" ? "Add enemy… (3 gang = 3 gangers)" : "Add creature… (3 gob = 3 goblins · 40 gob group)" } });
+    const addC = (text) => { if (specAddText(spec, text)) this.draw(true); };
+    if (typeof obsidian.AbstractInputSuggest === "function") new CombatantSuggest(this.plugin, cin, addC, "creature");
+    else cin.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addC(cin.value.trim()); } });
+    if (this.refocus) { setTimeout(() => cin.focus(), 10); this.refocus = false; }
+
+    // options + difficulty
+    const opt = el.createDiv({ cls: "ri-wiz-opts" });
+    if (this.plugin.sys.rollHp) {
+      const lbl = opt.createEl("label", { cls: "ri-wiz-check" });
+      const cb = lbl.createEl("input", { type: "checkbox" });
+      cb.checked = !!spec.rollHP;
+      lbl.createSpan({ text: "Roll for HP" });
+      cb.onchange = () => { spec.rollHP = cb.checked; };
+    }
+    const diff = opt.createSpan({ cls: "ri-wiz-diff" });
+    this.updateDifficulty(diff);
+
+    // buttons
+    const foot = el.createDiv({ cls: "ri-wiz-foot" });
+    const back = foot.createEl("button", { text: "‹ Back" });
+    back.onclick = (e) => { e.preventDefault(); this.kind = null; this.draw(); };
+    const go = foot.createEl("button", { cls: "mod-cta", text: k.button });
+    go.onclick = async (e) => {
+      e.preventDefault();
+      go.disabled = true;
+      try { await this.finish(); } finally { go.disabled = false; }
+    };
+  }
+
+  async updateDifficulty(span) {
+    if (!this.plugin.sys.difficulty || !this.spec.creatures.length) return;
+    try {
+      const plan = await this.plugin.resolveEncounter(this.spec, "");
+      const w = difficultyWord(plan.difficulty);
+      if (w) { span.setText(`${w} encounter`); span.addClass(`is-${String(plan.difficulty.label).toLowerCase().replace(/\s+/g, "-")}`); }
+    } catch (e) { /* no difficulty */ }
+  }
+
+  draw(refocus = false) {
+    if (refocus) this.refocus = true;
+    const el = this.contentEl;
+    el.empty();
+    el.addClass("ri-wizard");
+    if (!this.kind) this.drawChoice(el);
+    else this.drawSetup(el);
+  }
+
+  async finish() {
+    const spec = this.spec;
+    if (!spec.creatures.length && spec.playersMode === "none") { new Notice("Add some creatures first."); return; }
+    if (this.kind === "encounter") {
+      const title = spec.name || `Encounter ${new Date().toISOString().slice(0, 10)}`;
+      const body = await this.plugin.encounterNoteBody({ ...spec, name: title });
+      this.close();
+      const file = await this.plugin.newEncounterNote(title, body);
+      new Notice(`Encounter note created: ${file.path}`);
+    } else {
+      const text = this.plugin.initiativeCardText(spec);
+      this.close();
+      new CopyTextModal(this.app, "Initiative tracker", "Copy this into the note where the fight happens. It shows as a prepared encounter with a Roll Initiative button.", text).open();
+    }
+  }
+}
+
+/** Shows prepared text with a "Copy and Close" button. */
+class CopyTextModal extends Modal {
+  constructor(app, title, hint, text) {
+    super(app);
+    this.titleText = title;
+    this.hint = hint;
+    this.text = text;
+  }
+  onOpen() {
+    this.titleEl.setText(this.titleText);
+    this.modalEl.addClass("ri-wizard-modal");
+    const el = this.contentEl;
+    el.addClass("ri-wizard");
+    el.createEl("p", { cls: "ri-wiz-lead", text: this.hint });
+    const ta = el.createEl("textarea", { cls: "ri-wiz-code" });
+    ta.value = this.text;
+    ta.readOnly = true;
+    ta.rows = Math.min(16, this.text.split("\n").length + 1);
+    const foot = el.createDiv({ cls: "ri-wiz-foot" });
+    const cancel = foot.createEl("button", { text: "Close" });
+    cancel.onclick = () => this.close();
+    const copy = foot.createEl("button", { cls: "mod-cta", text: "Copy and Close" });
+    copy.onclick = async () => {
+      let ok = false;
+      try { await navigator.clipboard.writeText(this.text); ok = true; } catch (e) {
+        try { ta.select(); ok = document.execCommand("copy"); } catch (e2) { ok = false; }
+      }
+      new Notice(ok ? "Copied - paste it into your note." : "Couldn't copy - select the text and copy it yourself.");
+      if (ok) this.close();
+    };
+    setTimeout(() => { ta.focus(); ta.select(); }, 10);
+  }
+  onClose() { this.contentEl.empty(); }
+}
+
+// ---------------------------------------------------------------------------
+// Player screen (TTRPG Tools - Player Screen): a live, read-only view of the
+// running fight without HP numbers or AC.
+// ---------------------------------------------------------------------------
+
+const PLAYER_BLOCK = "roll-initiative-players";
+const SCREEN_PLUGIN_ID = "ttrpg-tools-screen";
+
+/** Draw the players' view of a session into `el`. Pure DOM, no controls. */
+function renderPlayerView(el, plugin, session) {
+  el.empty();
+  const root = el.createDiv({ cls: "ri ri-player-view" });
+  if (!session) {
+    root.createDiv({ cls: "ri-empty", text: "No fight is running." });
+    return root;
+  }
+  const enc = session.enc;
+  if (session.isRunning()) root.addClass("ri-live");
+  if (enc.ended) root.addClass("ri-ended");
+  const head = root.createDiv({ cls: "ri-head" });
+  const left = head.createDiv({ cls: "ri-head-left" });
+  const round = left.createDiv({ cls: "ri-round" });
+  if (enc.ended) {
+    round.createSpan({ cls: "ri-round-label", text: "Ended" });
+    round.createSpan({ cls: "ri-round-num", text: String(enc.round) });
+  } else if (enc.round > 0) {
+    round.createSpan({ cls: "ri-round-label", text: "Round" });
+    round.createSpan({ cls: "ri-round-num", text: String(enc.round) });
+  } else {
+    round.createSpan({ cls: "ri-round-label", text: "Ready" });
+  }
+  const info = left.createDiv({ cls: "ri-info" });
+  if (enc.name) info.createSpan({ cls: "ri-enc-name", text: enc.name });
+
+  const ui = { app: plugin.app, session };
+  const numbers = EncounterUI.prototype.tokenNumbers.call(ui);
+  const bars = plugin.settings.playerScreenBars || "all";
+  const list = root.createDiv({ cls: "ri-list" });
+  let shown = 0;
+  for (const c of enc.combatants) {
+    if (c.hidden) continue;
+    shown++;
+    const s = session.stat(c);
+    const row = list.createDiv({ cls: "ri-row" });
+    if (c.current) row.addClass("is-current");
+    if (c.player) row.addClass("is-player");
+    row.addClass(`is-${session.disp(c)}`);
+    if (c.off) row.addClass("is-off");
+    if (s.dead || session.isDown(c)) row.addClass("is-down");
+
+    // token (no menu on the player screen)
+    const tok = row.createDiv({ cls: `ri-token is-${session.colour(c)}` });
+    if (session.isCharmed(c)) tok.addClass("is-charmed");
+    const face = tok.createDiv({ cls: "ri-token-face" });
+    const initials = () => {
+      face.empty();
+      face.addClass("is-initials");
+      face.setText(c.name.replace(/\s+\d+$/, "").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase());
+    };
+    const src = EncounterUI.prototype.imageSrc.call(ui, s.image);
+    if (src) {
+      const img = face.createEl("img");
+      img.src = src;
+      img.alt = "";
+      img.onerror = initials;
+    } else initials();
+    if (numbers.get(c) !== undefined) tok.createSpan({ cls: "ri-token-num", text: String(numbers.get(c)) });
+
+    row.createDiv({ cls: "ri-init", text: c.init === undefined ? "–" : String(c.init) });
+
+    const main = row.createDiv({ cls: "ri-main" });
+    const top = main.createDiv({ cls: "ri-top" });
+    top.createSpan({ cls: "ri-name", text: c.name });
+    if (c.player) top.createSpan({ cls: "ri-tag is-live", text: "PC" });
+    const disp = session.disp(c);
+    if (disp === "ally") top.createSpan({ cls: "ri-tag is-ally", text: "ALLY" });
+    else if (disp === "neutral") top.createSpan({ cls: "ri-tag is-neutral", text: "NEUTRAL" });
+    if (s.group) {
+      const g = top.createSpan({ cls: "ri-tag is-group" });
+      setIcon(g.createSpan({ cls: "ri-tag-icon" }), "users");
+      g.createSpan({ text: `${s.alive}/${s.group}` });
+      const fl = plugin.casualtyFor(session, c);
+      if (fl) {
+        g.addClass(fl.delta < 0 ? "is-hit" : "is-healed");
+        g.createSpan({ cls: `ri-casualty ${fl.delta < 0 ? "is-loss" : "is-gain"}`, text: fl.delta < 0 ? `−${-fl.delta}` : `+${fl.delta}` });
+      }
+    }
+
+    const showBar = bars === "all" || (bars === "players" && c.player);
+    if (showBar && s.hp !== undefined) {
+      const max = Math.max(1, s.maxHp ?? s.hp);
+      const ratio = Math.max(0, Math.min(1, s.hp / max));
+      const bar = main.createDiv({ cls: "ri-bar" });
+      const fill = bar.createDiv({ cls: "ri-bar-fill" });
+      setCssVars(fill, { "--ri-pct": `${Math.round(ratio * 100)}%` });
+      fill.addClass(ratio > 0.5 ? "ri-ok" : ratio > 0.25 ? "ri-hurt" : "ri-bad");
+    }
+
+    // death saves (read-only)
+    if (s.live && s.system !== "cpred" && s.hp <= 0 && !s.dead && s.deathSaves) {
+      const ds = main.createDiv({ cls: "ri-ds" });
+      for (const kind of ["success", "fail"]) {
+        const grp = ds.createDiv({ cls: `ri-ds-group is-${kind}` });
+        grp.createSpan({ cls: "ri-ds-label", text: kind === "success" ? "Saves" : "Fails" });
+        [0, 1, 2].forEach((i) => grp.createSpan({ cls: `ri-ds-pip${s.deathSaves[kind][i] ? " is-on" : ""}` }));
+      }
+    }
+
+    const conds = main.createDiv({ cls: "ri-conds" });
+    if (s.dead && !(s.conditions || []).some((x) => x.name === "Dead")) conds.createSpan({ cls: "ri-cond is-dead", text: "Dead" });
+    if (s.exhaustion) conds.createSpan({ cls: "ri-cond is-exhaustion", text: `Exhaustion ${s.exhaustion}` });
+    for (const cond of s.conditions || []) conds.createSpan({ cls: "ri-cond", text: cond.dur !== undefined ? `${cond.name} ${cond.dur}` : cond.name });
+  }
+  if (!shown) list.createDiv({ cls: "ri-empty", text: "Waiting for the fight to start…" });
+  return root;
+}
+
+/** The block the player screen renders: follows the running fight live. */
+class PlayerScreenChild extends MarkdownRenderChild {
+  constructor(plugin, el) {
+    super(el);
+    this.plugin = plugin;
+    this.timer = null;
+  }
+  onload() {
+    this.refresh();
+    const later = () => {
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = setTimeout(() => { this.timer = null; this.refresh(); }, 80);
+    };
+    const ws = this.plugin.app.workspace;
+    this.registerEvent(ws.on("roll-initiative:change", later));
+    this.registerEvent(ws.on("roll-initiative:sheet-written", later));
+    this.registerEvent(ws.on("dnd-sheet:main-file-changed", later));
+    this.registerEvent(ws.on("dnd-sheet:conditions-changed", later));
+    this.registerEvent(ws.on("cpr-sheet:refresh", later));
+    this.registerEvent(this.plugin.app.metadataCache.on("changed", (file) => {
+      const s = this.session;
+      if (s && s.watchedPaths().has(file.path)) later();
+    }));
+  }
+  onunload() { if (this.timer) clearTimeout(this.timer); }
+  async refresh() {
+    try {
+      this.session = await this.plugin.playerScreenSession();
+      if (this.session) this.session.refreshSheets();
+      renderPlayerView(this.containerEl, this.plugin, this.session);
+    } catch (e) {
+      console.error("Roll for Initiative: player screen", e);
+    }
   }
 }
 
@@ -3702,6 +4209,50 @@ class InitiativeSettingTab extends PluginSettingTab {
     toggle("Open sidebar when combat starts", "Rolling initiative in a note also shows it in the sidebar.", "openSidebarOnStart");
     toggle("End combat when all enemies are down", "Marks the initiative as ended as soon as every enemy (red) is at 0 HP. Off: end it yourself with the ■ button.", "autoEnd");
 
+    new Setting(containerEl).setName("Armies & minions (groups)").setHeading();
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "A group is one initiative row for many identical creatures with a shared HP pool (HP each × how many). Make one with the 👥 button on an encounter card (creatures with a count above 1), by typing \"40 gob group\" in the add box, or by right-clicking creatures in a fight → Fight as one group. Damage comes off the pool; Area hits several members at once.",
+    });
+    const numSetting = (name, desc, key, ph) => new Setting(containerEl).setName(name).setDesc(desc).addText((t) => {
+      t.inputEl.type = "number";
+      t.setPlaceholder(ph).setValue(p.settings[key] ? String(p.settings[key]) : "").onChange(async (v) => {
+        const n = parseInt(v, 10);
+        p.settings[key] = Number.isFinite(n) && n > 1 ? n : 0;
+        await p.saveSettings();
+      });
+    });
+    numSetting("Group size", "When a creature is run as a group, split it into groups of this many (50 goblins with 10 = 5 groups of 10). Empty = everyone in one group. Each card can still pick its own size from the 👥 button.", "defaultGroupSize", "everyone");
+    numSetting("Group automatically from", "Creatures with at least this count start as a group on encounter cards (e.g. 8). Empty = never; turn it on per creature with the 👥 button.", "autoGroupFrom", "off");
+    toggle("Show casualties", "Float a −1 / −3 over a group's HP bar when members go down (and +N when they get back up).", "showCasualties");
+
+    new Setting(containerEl).setName("Player screen").setHeading();
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: p.screenPlugin
+        ? "TTRPG Tools - Player Screen is enabled. Use the monitor button in the tracker (or the \"Show initiative on player screen\" command): your players see the order, turns, conditions and groups live - never HP numbers or AC, and nothing you've hidden."
+        : "Install and enable \"TTRPG Tools - Player Screen\" to show the initiative to your players on a second screen.",
+    });
+    new Setting(containerEl)
+      .setName("Health bars on the player screen")
+      .setDesc("The coloured bar under each name (it shows how hurt someone is, never the numbers).")
+      .addDropdown((d) => {
+        d.addOption("all", "Everyone");
+        d.addOption("players", "Player characters only");
+        d.addOption("none", "Nobody");
+        d.setValue(p.settings.playerScreenBars || "all").onChange(async (v) => { p.settings.playerScreenBars = v; await p.saveSettings(); });
+      });
+
+    new Setting(containerEl).setName("Encounters").setHeading();
+    new Setting(containerEl)
+      .setName("Encounters folder")
+      .setDesc("Where new combat encounter notes go (the swords icon in the left ribbon, or the \"New encounter note\" command). Empty = the vault root.")
+      .addText((t) => t.setPlaceholder("Encounters").setValue(p.settings.encounterFolder || "").onChange(async (v) => {
+        p.settings.encounterFolder = v.trim();
+        await p.saveSettings();
+      }))
+      .addButton((b) => b.setButtonText("New combat").onClick(() => new CombatWizardModal(p).open()));
+
     new Setting(containerEl).setName("Atlas VTT").setHeading();
     containerEl.createEl("p", {
       cls: "setting-item-description",
@@ -3772,11 +4323,18 @@ class RollInitiativePlugin extends Plugin {
     this.registerMarkdownCodeBlockProcessor(ENCOUNTER_BLOCK, (source, el, ctx) => {
       ctx.addChild(new EncounterCard(this, el, ctx, source));
     });
+    this.registerMarkdownCodeBlockProcessor(PLAYER_BLOCK, (_source, el, ctx) => {
+      ctx.addChild(new PlayerScreenChild(this, el));
+    });
 
-    this.addRibbonIcon("swords", "Open initiative sidebar", () => this.revealView());
+    this.addRibbonIcon("swords", "New combat: encounter or initiative", () => new CombatWizardModal(this).open());
 
     this.addCommand({ id: "insert-combat-block", name: "Insert combat block", editorCallback: (editor) => editor.replaceSelection(TEMPLATE) });
     this.addCommand({ id: "insert-encounter-block", name: "Insert encounter block", editorCallback: (editor) => editor.replaceSelection(ENCOUNTER_TEMPLATE) });
+    this.addCommand({ id: "new-combat", name: "New combat (encounter or initiative)", callback: () => new CombatWizardModal(this).open() });
+    this.addCommand({ id: "show-on-player-screen", name: "Show initiative on player screen", callback: () => this.showOnPlayerScreen() });
+    this.addCommand({ id: "new-encounter-note", name: "New encounter note", callback: () => new CombatWizardModal(this, "encounter").open() });
+    this.addCommand({ id: "new-initiative-text", name: "New initiative (text to paste)", callback: () => new CombatWizardModal(this, "initiative").open() });
     this.addCommand({
       id: "open-combat-note",
       name: "Open Roll Initiative note",
@@ -3857,7 +4415,7 @@ class RollInitiativePlugin extends Plugin {
     return Math.floor(Math.random() * this.sys.initDie) + 1;
   }
   isNpc(file) {
-    const folder = (this.settings.npcFolder || "").replace(/\/+$/, "");
+    const folder = folderPath(this.settings.npcFolder);
     return isNpcNote(this.app, file) || !!(folder && file.path.startsWith(folder + "/"));
   }
   /** Settings changed in a way that changes how notes are read. */
@@ -3897,6 +4455,7 @@ class RollInitiativePlugin extends Plugin {
   }
 
   announce(session) {
+    this.lastSession = session;
     const cur = session.enc.combatants.find((c) => c.current);
     this.app.workspace.trigger("roll-initiative:change", {
       sourcePath: session.sourcePath,
@@ -4025,7 +4584,7 @@ class RollInitiativePlugin extends Plugin {
   /** Everything the add box can suggest: sheets, monster library, NPCs. */
   combatantIndex() {
     if (this._index) return this._index;
-    const folder = this.settings.monsterFolder || this.bridge.monsterFolder();
+    const folder = folderPath(this.settings.monsterFolder || this.bridge.monsterFolder());
     const out = [];
     for (const f of this.app.vault.getMarkdownFiles()) {
       const fm = (this.app.metadataCache.getFileCache(f) || {}).frontmatter || {};
@@ -4109,6 +4668,90 @@ class RollInitiativePlugin extends Plugin {
     return plan;
   }
 
+  /** The fight the player screen shows: the active one (the GM's live copy if open). */
+  async playerScreenSession() {
+    const a = this.settings.active;
+    const last = this.lastSession;
+    if (last && (!a || (last.sourcePath === a.path && last.enc.id === a.id))) return last;
+    return this.syncSession();
+  }
+
+  get screenPlugin() {
+    return (this.app.plugins && this.app.plugins.plugins && this.app.plugins.plugins[SCREEN_PLUGIN_ID]) || null;
+  }
+
+  /** Send the live player view to TTRPG Tools - Player Screen. */
+  async showOnPlayerScreen(session) {
+    const sp = this.screenPlugin;
+    const send = sp && (typeof sp.sendMarkdown === "function" ? sp.sendMarkdown.bind(sp) : sp.api && typeof sp.api.sendMarkdown === "function" ? sp.api.sendMarkdown.bind(sp.api) : null);
+    if (!send) {
+      new Notice("Install and enable \"TTRPG Tools - Player Screen\" to show the initiative to your players.", 6000);
+      return false;
+    }
+    if (session) this.lastSession = session;
+    const s = session || (await this.playerScreenSession());
+    await send("```" + PLAYER_BLOCK + "\n```", s ? s.sourcePath : "");
+    return true;
+  }
+
+  /** Remember a "-2" / "+1" to float over a group's HP bar for a moment. */
+  flashCasualties(session, c, delta) {
+    if (!this.settings.showCasualties || !delta) return;
+    this.casualties = this.casualties || new Map();
+    this.casualties.set(`${session.sourcePath}|${c.name}`, { delta, until: Date.now() + 2600 });
+  }
+  casualtyFor(session, c) {
+    const k = `${session.sourcePath}|${c.name}`;
+    const f = this.casualties && this.casualties.get(k);
+    if (!f) return null;
+    if (f.until < Date.now()) { this.casualties.delete(k); return null; }
+    return f;
+  }
+
+  /** Is this card creature run as group(s)? Returns the group size
+   *  (n = everyone in one group), or 0 for one row per creature. */
+  groupingOf(c, n = c.count || 1) {
+    if (n < 2) return 0;
+    let g = c.group;
+    if (g === undefined) g = this.settings.autoGroupFrom > 1 && n >= this.settings.autoGroupFrom;
+    if (!g) return 0;
+    if (typeof g === "number") return Math.min(g, n);
+    const def = Number(this.settings.defaultGroupSize) || 0;
+    return def > 1 ? Math.min(def, n) : n;
+  }
+
+  /** Full combat note text: the whole fight as a roll-initiative tracker
+   *  (every player and creature on its own row, ready to roll). */
+  async encounterNoteBody(spec, sourcePath = "") {
+    const plan = await this.resolveEncounter(spec, sourcePath);
+    const lines = [];
+    if (spec.name) lines.push(`name ${spec.name}`);
+    lines.push(...this.encounterLines(plan));
+    return "```" + BLOCK + "\n" + lines.join("\n") + "\n```\n";
+  }
+
+  /** Compact prepared card (roll-encounter) to paste into any note. */
+  initiativeCardText(spec) {
+    const yaml = serializeEncounterSpec(spec);
+    return "```" + ENCOUNTER_BLOCK + "\n" + (yaml ? yaml + "\n" : "") + "```\n";
+  }
+
+  /** New note in the encounters folder. `body` defaults to an empty encounter card. */
+  async newEncounterNote(name, body) {
+    const raw = folderPath(this.settings.encounterFolder);
+    const norm = (x) => (obsidian.normalizePath ? obsidian.normalizePath(x) : x);
+    const folder = raw ? norm(raw) : "";
+    const clean = String(name || "").replace(/[\\/:*?"<>|#^[\]]/g, "").trim() || `Encounter ${new Date().toISOString().slice(0, 10)}`;
+    if (folder && !this.app.vault.getAbstractFileByPath(folder)) {
+      try { await this.app.vault.createFolder(folder); } catch (e) { /* exists */ }
+    }
+    let path = norm(`${folder ? folder + "/" : ""}${clean}.md`);
+    for (let i = 2; this.app.vault.getAbstractFileByPath(path); i++) path = norm(`${folder ? folder + "/" : ""}${clean} ${i}.md`);
+    const file = await this.app.vault.create(path, `# ${clean}\n\n${body || `\`\`\`${ENCOUNTER_BLOCK}\nname: ${yamlStr(clean)}\n\`\`\`\n`}`);
+    await this.app.workspace.getLeaf("tab").openFile(file, { active: true });
+    return file;
+  }
+
   /** Block lines (without header) for a resolved encounter. */
   encounterLines(plan) {
     const lines = [];
@@ -4117,20 +4760,25 @@ class RollInitiativePlugin extends Plugin {
       const n = c.countDice ? rollDice(c.countDice) || 1 : c.count;
       if (!n) continue;
       const base = c.link ? linkBasename(c.link) : "";
-      if (c.group && n > 1) {
-        // the whole group in one row with a shared HP pool
-        const parts = [];
-        if (!c.link || c.name !== base) parts.push(c.name);
-        if (c.link) parts.push(`[[${c.link}]]`);
-        parts.push(`group ${n}`);
+      const grouping = this.groupingOf(c, n);
+      if (grouping) {
+        // groups with a shared HP pool: one row each (50 goblins in groups of 10 = 5 rows)
+        const chunks = groupChunks(n, grouping);
         const sb = c.stats || {};
-        if (c.hp !== undefined && sb.hp === undefined) parts.push(`each ${c.hp}`);
-        if (c.ac !== undefined && sb.ac === undefined) parts.push(`ac ${c.ac}`);
-        if (c.mod !== undefined && sb.mod === undefined) parts.push(`mod ${signed(c.mod)}`);
-        if (c.xp !== undefined) parts.push(`xp ${c.xp}`);
-        if (c.hidden) parts.push("hidden");
-        if (c.disp && c.disp !== "enemy") parts.push(c.disp);
-        lines.push(parts.join(" "));
+        chunks.forEach((size, idx) => {
+          const name = chunks.length > 1 ? `${c.name} ${idx + 1}` : c.name;
+          const parts = [];
+          if (!c.link || name !== base) parts.push(name);
+          if (c.link) parts.push(`[[${c.link}]]`);
+          if (size > 1) parts.push(`group ${size}`);
+          if (c.hp !== undefined && sb.hp === undefined) parts.push(size > 1 ? `each ${c.hp}` : `hp ${c.hp}`);
+          if (c.ac !== undefined && sb.ac === undefined) parts.push(`ac ${c.ac}`);
+          if (c.mod !== undefined && sb.mod === undefined) parts.push(`mod ${signed(c.mod)}`);
+          if (c.xp !== undefined) parts.push(`xp ${c.xp}`);
+          if (c.hidden) parts.push("hidden");
+          if (c.disp && c.disp !== "enemy") parts.push(c.disp);
+          lines.push(parts.join(" "));
+        });
         continue;
       }
       const hd = c.stats && c.stats.hitDice;
@@ -4262,5 +4910,5 @@ module.exports._internals = {
   parseEncounterCreature, parseEncounterSpec, isNpcNote, quoteLinks, serializeEncounterSpec, difficultyWord,
   atlasEncounterToSpec, matchSheet, imageBaseName, AtlasLink,
   SYSTEMS, CyberBridge, cpredHit, cpredWoundConditions, cpredDeathSave, statsFromCyberpunk, cpredInitMod,
-  groupAlive, groupAreaHp,
+  groupAlive, groupAreaHp, groupChunks, specAddText, folderPath, renderPlayerView, PlayerScreenChild,
 };

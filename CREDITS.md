@@ -23,6 +23,7 @@ Quick Initiative is distributed under the MIT License. Its permission notice rea
 |---|---|---|
 | [Initiative Tracker](https://github.com/valentine195/obsidian-initiative-tracker) | Jeremy Valentine (javalent) | `encounter` block syntax (used by `roll-encounter`), sidebar creature view, HP sync to player notes |
 | [Initiative Tracker Plus](https://github.com/msweat254) | Mike (msweat254) | Encounter card behaviour |
+| [TTRPG Tools – Player Screen](https://github.com/jareika/ttrpg-tools-screen) | Jareika (Johannes Schwartz) | The second-screen window that shows the players' view of the fight (through its public `sendMarkdown` API) |
 | [Fantasy Statblocks](https://github.com/valentine195/obsidian-5e-statblocks) | Jeremy Valentine (javalent) | Statblock rendering in the side pane, bestiary lookups, the `statblock` block format |
 | Atlas VTT | [Fabian Urbanek](https://github.com/ByteMirror) | Battle maps; encounters and live token sync |
 | Connect for Atlas VTT | [Bento's Grimoire of Things](https://github.com/evolJoaoBento) | Showed how to talk to an open Atlas map |
