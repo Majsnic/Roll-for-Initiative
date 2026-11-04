@@ -139,6 +139,7 @@ function parseCombatantLine(line) {
   const tokens = text.split(/\s+/).filter(Boolean);
   const nameParts = [];
   let count = 1;
+  let groupFlag = false;
   const c = { name: "", player: false, hidden: false, off: false, conditions, current };
   for (let i = 0; i < tokens.length; i++) {
     const tok = tokens[i];
@@ -153,6 +154,10 @@ function parseCombatantLine(line) {
     else if (low === "enemy" || low === "hostile") c.disp = "enemy";
     else if (low === "hidden") c.hidden = true;
     else if (low === "off" || low === "disabled") c.off = true;
+    else if (GROUP_WORDS.includes(low)) {
+      groupFlag = true;
+      if (next !== undefined && /^\d+$/.test(next)) { c.group = parseInt(next, 10); i++; }
+    } else if (low === "each" && next !== undefined && /^\d+$/.test(next)) { c.each = parseInt(next, 10); i++; }
     else if (low === "init" && isIntToken(next)) {
       if (/^[+-]/.test(next)) c.mod = parseInt(next, 10);
       else c.init = parseInt(next, 10);
@@ -178,6 +183,17 @@ function parseCombatantLine(line) {
   if (link) c.link = link;
   if (alias) c.alias = alias;
   if (!c.name) return [];
+  if (groupFlag) {
+    // one row for the whole group: `20x [[Goblin]] group` or `[[Goblin]] group 20`
+    c.group = Math.max(1, Math.min(c.group || count, 999));
+    if (c.each === undefined && c.hp !== undefined) {
+      // hand-typed `hp 7` on a group means each member's HP
+      c.each = c.maxHp ?? c.hp;
+      delete c.hp;
+      delete c.maxHp;
+    }
+    return [c];
+  }
   count = Math.max(1, Math.min(count, 50));
   if (count === 1) return [c];
   return Array.from({ length: count }, (_v, i) => ({
@@ -225,6 +241,8 @@ function serializeCombatant(c, live) {
   if (c.disp) out.push(c.disp);
   if (c.hidden) out.push("hidden");
   if (c.off) out.push("off");
+  if (c.group) out.push(`group ${c.group}`);
+  if (c.group && c.each !== undefined) out.push(`each ${c.each}`);
   if (c.init !== undefined) out.push(`init ${c.init}`);
   if (!live) {
     if (c.mod !== undefined) out.push(`mod ${signed(c.mod)}`);
@@ -536,6 +554,24 @@ function damageMonster(c, amount) {
   c.hp = Math.max(0, c.hp - overflow);
   return before - c.hp;
 }
+// ---- groups (minions / mobs): N identical creatures in one row, one HP pool ----
+const GROUP_WORDS = ["group", "mob", "minions", "horde"];
+
+/** How many members are still standing: the pool divided by HP each, rounded up. */
+function groupAlive(hp, each, size) {
+  if (hp === undefined || !each) return size;
+  if (hp <= 0) return 0;
+  return Math.min(size, Math.ceil(hp / each));
+}
+
+/** Area damage: `amount` to each of `targets` standing members (all of them
+ *  if targets is empty). One member can't lose more than its own HP. */
+function groupAreaHp(hp, each, size, amount, targets) {
+  const alive = groupAlive(hp, each, size);
+  const n = Math.min(alive, targets === undefined || targets === null || !Number.isFinite(targets) ? alive : Math.max(0, targets));
+  return Math.max(0, hp - n * Math.min(Math.max(0, amount), each));
+}
+
 function healMonster(c, amount) {
   if (c.hp === undefined) return;
   c.hp = Math.min(c.maxHp ?? Infinity, c.hp + Math.abs(amount));
@@ -1223,7 +1259,10 @@ class Session {
 
   /** Copy note stats into the block's own values (first time only). */
   fill(c, r) {
-    if (c.hp === undefined) {
+    if (c.group) {
+      if (c.each === undefined && r.hp !== undefined) { c.each = r.hp; this.dirty = true; }
+      if (c.hp === undefined && c.each !== undefined) { c.maxHp = c.each * c.group; c.hp = c.maxHp; this.dirty = true; }
+    } else if (c.hp === undefined) {
       const rolled = this.plugin.settings.rollHp && r.hitDice ? rollDice(r.hitDice) : undefined;
       const hp = rolled ?? r.hp;
       if (hp !== undefined) { c.hp = hp; c.maxHp = hp; this.dirty = true; }
@@ -1275,7 +1314,17 @@ class Session {
       image: r.image, live: false,
       sp: c.sp, body: c.body ?? r.body, deathPenalty: c.dsp || 0, threat: r.threat,
       dead: (c.conditions || []).some((x) => x.name === "Dead"),
+      ...this.groupStat(c, r),
     };
+  }
+  /** Group rows: size, HP each and how many are still standing. */
+  groupStat(c, r) {
+    if (!c.group || c.player) return {};
+    const each = c.each ?? r.hp ?? (c.maxHp ? Math.max(1, Math.round(c.maxHp / c.group)) : undefined);
+    return { group: c.group, each, alive: groupAlive(c.hp, each, c.group) };
+  }
+  isGroup(c) {
+    return !!c.group && !c.player && !this.isLive(c);
   }
   /** "pc" | "enemy" | "neutral" | "ally" - NPC notes default to neutral. */
   disp(c) {
@@ -1328,7 +1377,7 @@ class Session {
       if (c.off) continue;
       const s = this.stat(c);
       if (c.player) { if (s.level) levels.push(s.level); }
-      else if (this.disp(c) === "enemy" && s.xp) xp.push(s.xp);
+      else if (this.disp(c) === "enemy" && s.xp) for (let i = 0; i < (s.group || 1); i++) xp.push(s.xp);
     }
     if (!xp.length) return null;
     return difficulty(levels, xp);
@@ -1444,9 +1493,104 @@ class Session {
     await this.addCombatants(members.filter((m) => !have.has(m.link || m.name)));
   }
 
-  /** Cyberpunk RED: one hit to body / head / direct, through armor. */
-  async cpHit(c, amount, loc = "body") {
+  /** Damage / heal a group's shared HP pool.
+   *  mode: "damage" (off the pool), "area" (amount to each of `targets`
+   *  standing members; empty = all), "drop" (that many members fall),
+   *  "heal" (back into the pool). */
+  async groupHit(c, amount, mode = "damage", targets) {
     const s = this.stat(c);
+    if (c.hp === undefined || !s.each) { new Notice(`${c.name}: set the group's HP first (HP each).`); return; }
+    const before = s.alive;
+    if (mode === "heal") c.hp = Math.min(c.maxHp ?? s.each * s.group, c.hp + amount);
+    else if (mode === "drop") c.hp = Math.max(0, (before - Math.max(1, amount || 1)) * s.each);
+    else if (mode === "area") c.hp = groupAreaHp(c.hp, s.each, s.group, amount, targets);
+    else c.hp = Math.max(0, c.hp - amount);
+    const after = groupAlive(c.hp, s.each, s.group);
+    this.checkAutoEnd();
+    await this.commit();
+    const fell = before - after;
+    if (mode === "heal") new Notice(`${c.name}: ${after}/${s.group} standing`);
+    else new Notice(`${c.name}: ${fell > 0 ? `${fell} down` : "no one down"} · ${after}/${s.group} standing`);
+  }
+
+  /** Set HP each for a group (resets the pool to full). */
+  async groupSetEach(c, each) {
+    if (!each) return;
+    c.each = each;
+    c.maxHp = each * c.group;
+    c.hp = c.maxHp;
+    await this.commit();
+  }
+
+  /** Split a group back into one row per standing member. */
+  async splitGroup(c) {
+    const s = this.stat(c);
+    const i = this.enc.combatants.indexOf(c);
+    if (i < 0 || !this.isGroup(c)) return;
+    const base = c.name.replace(/\s+\d+$/, "");
+    const n = s.alive || 0;
+    const members = [];
+    for (let k = 1; k <= n; k++) {
+      const m = { ...c, name: n > 1 ? `${base} ${k}` : base, conditions: c.conditions.map((x) => ({ ...x })), current: c.current && k === 1 };
+      delete m.group;
+      delete m.each;
+      if (s.each && c.hp !== undefined) {
+        // the last one carries the damage the pool has taken
+        const hp = k < n ? s.each : c.hp - (n - 1) * s.each;
+        m.hp = Math.max(1, hp);
+        m.maxHp = s.each;
+      }
+      members.push(m);
+    }
+    this.enc.combatants.splice(i, 1, ...members);
+    if (c.current && !members.length && this.enc.combatants.length) this.enc.combatants[Math.min(i, this.enc.combatants.length - 1)].current = true;
+    await this.resolveAll();
+    await this.commit();
+  }
+
+  /** Creatures that can be merged with `c` into one group (same statblock). */
+  mergeCandidates(c) {
+    if (c.player || c.group || this.isLive(c)) return [];
+    const key = (x) => (x.link ? linkBasename(x.link).toLowerCase() : x.name.replace(/\s+\d+$/, "").toLowerCase());
+    const k = key(c);
+    return this.enc.combatants.filter((x) => !x.player && !x.group && !this.isLive(x) && key(x) === k);
+  }
+
+  /** Merge every creature like `c` into one group row sharing an HP pool. */
+  async mergeGroup(c) {
+    const list = this.mergeCandidates(c);
+    if (list.length < 2) return;
+    const r = this.r(c);
+    const each = r.hp ?? Math.max(...list.map((x) => x.maxHp ?? x.hp ?? 0)) ?? undefined;
+    const g = {
+      ...c,
+      name: c.name.replace(/\s+\d+$/, ""),
+      group: list.length,
+      each: each || undefined,
+      conditions: c.conditions.map((x) => ({ ...x })),
+      current: list.some((x) => x.current),
+    };
+    if (each) {
+      g.maxHp = each * list.length;
+      g.hp = Math.min(g.maxHp, list.reduce((sum, x) => sum + Math.max(0, x.hp ?? each), 0));
+    }
+    const first = Math.min(...list.map((x) => this.enc.combatants.indexOf(x)));
+    this.enc.combatants = this.enc.combatants.filter((x) => !list.includes(x));
+    this.enc.combatants.splice(first, 0, g);
+    await this.resolveAll();
+    await this.commit();
+  }
+
+  /** Cyberpunk RED: one hit to body / head / direct, through armor. */
+  async cpHit(c, amount, loc = "body", targets) {
+    const s = this.stat(c);
+    if (this.isGroup(c)) {
+      // a group shares one armor value; no ablation tracking per member
+      const sp = loc === "direct" ? 0 : ((s.sp && s.sp[loc === "head" ? "head" : "body"]) || 0);
+      let through = Math.max(0, Math.round(amount) - sp);
+      if (loc === "head") through *= 2;
+      return this.groupHit(c, through, targets === undefined ? "damage" : "area", targets);
+    }
     const res = cpredHit({ hp: s.hp, sp: s.sp }, amount, loc);
     // already Mortally Wounded: every hit adds +1 to the Death Save penalty
     const mwHit = (s.hp ?? 1) <= 0 && !s.dead;
@@ -1474,7 +1618,7 @@ class Session {
 
   /** Keep Seriously / Mortally Wounded in step with HP (block creatures). */
   cpWounds(c) {
-    if (this.plugin.sys.id !== "cpred" || c.hp === undefined) return;
+    if (this.plugin.sys.id !== "cpred" || c.hp === undefined || c.group) return;
     const names = cpredWoundConditions(c.hp, c.maxHp, c.conditions.map((x) => x.name));
     const keep = c.conditions.filter((x) => names.includes(x.name));
     for (const n of names) if (!keep.some((x) => x.name === n)) keep.push({ name: n });
@@ -1504,6 +1648,11 @@ class Session {
 
   /** amount > 0 damages, < 0 heals */
   async changeHp(c, amount, mode = amount >= 0 ? "damage" : "heal") {
+    if (this.isGroup(c) && mode !== "temp" && !(this.plugin.sys.id === "cpred" && (mode === "body" || mode === "head" || mode === "direct"))) {
+      if (mode === "max") return this.groupSetEach(c, Math.abs(amount));
+      if (mode === "damage" && this.plugin.sys.id === "cpred") return this.cpHit(c, Math.abs(amount), "body");
+      return this.groupHit(c, Math.abs(amount), mode === "heal" ? "heal" : "damage");
+    }
     if (this.plugin.sys.id === "cpred" && (mode === "damage" || mode === "body" || mode === "head" || mode === "direct")) {
       return this.cpHit(c, Math.abs(amount), mode === "damage" ? "body" : mode);
     }
@@ -1702,7 +1851,7 @@ class EncounterUI {
   tokenNumbers() {
     const groups = new Map();
     for (const c of this.session.enc.combatants) {
-      if (c.player) continue;
+      if (c.player || c.group) continue;
       const r = this.session.r(c);
       const key = r.path || (c.link ? linkBasename(c.link).toLowerCase() : r.kind === "bestiary" ? c.name.replace(/\s+\d+$/, "").toLowerCase() : null);
       if (!key) continue;
@@ -1800,7 +1949,7 @@ class EncounterUI {
 
     // ---- add box ----
     const add = root.createDiv({ cls: "ri-add" });
-    const input = add.createEl("input", { type: "text", cls: "ri-add-input", attr: { placeholder: this.plugin.sys.id === "cpred" ? "Add: type a name… (3 gang = 3 gangers)" : "Add: type a name… (3 gob = 3 goblins)" } });
+    const input = add.createEl("input", { type: "text", cls: "ri-add-input", attr: { placeholder: this.plugin.sys.id === "cpred" ? "Add: type a name… (3 gang = 3 gangers · 20 gang group)" : "Add: type a name… (3 gob = 3 goblins · 20 gob group)" } });
     input.setAttr("aria-label", "Add combatants");
     const doAdd = async () => {
       const v = input.value.trim();
@@ -1916,6 +2065,12 @@ class EncounterUI {
     if (disp === "ally") top.createSpan({ cls: "ri-tag is-ally", text: "ALLY" });
     else if (disp === "neutral") top.createSpan({ cls: "ri-tag is-neutral", text: "NEUTRAL" });
     if (c.hidden) setIcon(top.createSpan({ cls: "ri-tag is-icon" }), "eye-off");
+    if (s.group) {
+      const g = top.createSpan({ cls: "ri-tag is-group" });
+      setIcon(g.createSpan({ cls: "ri-tag-icon" }), "users");
+      g.createSpan({ text: `${s.alive}/${s.group}` });
+      g.title = `Group of ${s.group}${s.each ? `, ${s.each} HP each` : ""}: ${s.alive} still standing`;
+    }
     if (s.sp) {
       const sp = top.createSpan({ cls: "ri-ac ri-sp" });
       setIcon(sp.createSpan({ cls: "ri-ac-icon" }), "shield");
@@ -1942,7 +2097,7 @@ class EncounterUI {
     }
 
     // Cyberpunk RED death save (Mortally Wounded, any combatant)
-    if (this.plugin.sys.id === "cpred" && s.hp !== undefined && s.hp <= 0 && !s.dead) {
+    if (this.plugin.sys.id === "cpred" && s.hp !== undefined && s.hp <= 0 && !s.dead && !s.group) {
       const ds = main.createDiv({ cls: "ri-ds" });
       const b = ds.createEl("button", { cls: "ri-btn ri-cp-ds" });
       setIcon(b.createSpan({ cls: "ri-btn-icon" }), "skull");
@@ -2020,7 +2175,27 @@ class EncounterUI {
       input.setAttr("placeholder", s.hp === undefined ? "Max HP" : "Amount");
       input.setAttr("inputmode", "numeric");
       if (s.hp === undefined) {
+        if (s.group) input.setAttr("placeholder", "HP each");
         this.button(ed, "check", "Set HP", "ri-set", run(() => Number.isFinite(val()) && this.session.changeHp(c, val(), "max")));
+      } else if (s.group) {
+        // a whole group in one row: damage comes off the shared pool
+        const tgt = ed.createEl("input", { type: "number", cls: "ri-targets" });
+        tgt.setAttr("placeholder", `× all ${s.alive}`);
+        tgt.setAttr("aria-label", "How many members the area attack hits (empty = all standing)");
+        tgt.setAttr("inputmode", "numeric");
+        const targets = () => { const n = parseInt(tgt.value, 10); return Number.isFinite(n) && n > 0 ? n : undefined; };
+        if (this.plugin.sys.id === "cpred") {
+          this.button(ed, "shield", "Body", "ri-damage", run(() => Number.isFinite(val()) && this.session.cpHit(c, val(), "body")), "One body hit: damage over SP comes off the pool");
+          this.button(ed, "crosshair", "Head", "ri-damage ri-head", run(() => Number.isFinite(val()) && this.session.cpHit(c, val(), "head")), "One head hit: (damage - SP) × 2 off the pool");
+          this.button(ed, "zap", "Direct", "ri-damage ri-direct", run(() => Number.isFinite(val()) && this.session.cpHit(c, val(), "direct")), "Direct damage off the pool");
+          this.button(ed, "flame", "Area", "ri-area", run(() => Number.isFinite(val()) && this.session.cpHit(c, val(), "body", targets() ?? s.alive)), "Each target takes the damage (minus body SP)");
+        } else {
+          this.button(ed, "sword", "Damage", "ri-damage", run(() => Number.isFinite(val()) && this.session.groupHit(c, val(), "damage")), "Damage off the group's shared HP pool");
+          this.button(ed, "flame", "Area", "ri-area", run(() => Number.isFinite(val()) && this.session.groupHit(c, val(), "area", targets())), "Each target takes the full amount (Fireball, Cone of Cold…)");
+        }
+        this.button(ed, "user-minus", "−1", "ri-drop", run(() => this.session.groupHit(c, Number.isFinite(val()) && val() > 0 ? val() : 1, "drop")), "Members fall: type how many (empty = 1)");
+        this.button(ed, "heart", "Heal", "ri-heal", run(() => Number.isFinite(val()) && this.session.groupHit(c, val(), "heal")));
+        this.button(ed, "pencil", "Each", "ri-max", run(() => Number.isFinite(val()) && this.session.groupSetEach(c, val())), "Set HP each (refills the group)");
       } else if (this.plugin.sys.id === "cpred") {
         // Cyberpunk RED: enter the rolled damage, pick where it hit
         this.button(ed, "shield", "Body", "ri-damage", run(() => Number.isFinite(val()) && this.session.cpHit(c, val(), "body")), "Body hit (SP body, ablates)");
@@ -2041,7 +2216,8 @@ class EncounterUI {
         const b = ed.querySelector(pick);
         if (b) b.click();
       });
-      if (this.plugin.sys.id === "cpred") ed.createDiv({ cls: "ri-hint", text: `Type the rolled damage. SP ${s.sp ? `${s.sp.head} head / ${s.sp.body} body` : "0"} is subtracted and ablates; head hits ×2. Enter = body hit, +N = heal.${s.live ? " Saved to the player's note." : ""}` });
+      if (s.group && s.hp !== undefined) ed.createDiv({ cls: "ri-hint", text: `Group of ${s.group} · ${s.each ?? "?"} HP each · ${s.alive} standing. Damage comes off the shared pool; Area deals the amount to each of × targets (empty = everyone standing); −1 drops members.` });
+      else if (this.plugin.sys.id === "cpred") ed.createDiv({ cls: "ri-hint", text: `Type the rolled damage. SP ${s.sp ? `${s.sp.head} head / ${s.sp.body} body` : "0"} is subtracted and ablates; head hits ×2. Enter = body hit, +N = heal.${s.live ? " Saved to the player's note." : ""}` });
       else if (s.live) ed.createDiv({ cls: "ri-hint", text: "Saved to the character sheet." });
     } else if (kind === "init") {
       input.setAttr("placeholder", "Initiative");
@@ -2104,6 +2280,12 @@ class EncounterUI {
       new TextPromptModal(this.app, "Rename combatant", c.name, (v) => v && this.session.rename(c, v)).open();
     }));
     if (!c.player) menu.addItem((i) => i.setTitle("Duplicate").setIcon("copy").onClick(() => this.session.duplicate(c)));
+    if (this.session.isGroup(c)) {
+      menu.addItem((i) => i.setTitle("Split into individual creatures").setIcon("users").onClick(() => this.session.splitGroup(c)));
+    } else {
+      const same = this.session.mergeCandidates(c);
+      if (same.length > 1) menu.addItem((i) => i.setTitle(`Fight as one group (${same.length})`).setIcon("users").onClick(() => this.session.mergeGroup(c)));
+    }
     menu.addSeparator();
     menu.addItem((i) => i.setTitle("Remove").setIcon("trash").onClick(() => this.session.remove(c)));
     menu.showAtMouseEvent(e);
@@ -2392,9 +2574,12 @@ class CombatantSuggest extends BaseInputSuggest {
   getSuggestions(raw) {
     const q = raw.trim();
     if (!q) return [];
-    const m = /^(\d+)\s*x?\s+(.+)$/i.exec(q) || /^x(\d+)\s+(.+)$/i.exec(q);
-    const count = m ? Math.max(1, Math.min(50, parseInt(m[1], 10))) : 1;
-    const term = (m ? m[2] : q).replace(/^\[\[/, "").replace(/\]\]$/, "").trim();
+    const gm = /^(.*\S)\s+(group|mob|minions|horde)$/i.exec(q);
+    const asGroup = !!gm;
+    const qq = gm ? gm[1] : q;
+    const m = /^(\d+)\s*x?\s+(.+)$/i.exec(qq) || /^x(\d+)\s+(.+)$/i.exec(qq);
+    const count = m ? Math.max(1, Math.min(asGroup ? 999 : 50, parseInt(m[1], 10))) : 1;
+    const term = (m ? m[2] : qq).replace(/^\[\[/, "").replace(/\]\]$/, "").trim();
     const typed = { asTyped: true, text: q };
     if (!term) return [typed];
     if (SYNTAX_HINT.test(term)) return this.only === "pc" ? [] : [typed];
@@ -2404,7 +2589,7 @@ class CombatantSuggest extends BaseInputSuggest {
       if (this.only === "pc" && !it.pc) continue;
       if (this.only === "creature" && it.pc) continue;
       const r = fuzzy(it.name);
-      if (r) scored.push({ ...it, count, score: r.score });
+      if (r) scored.push({ ...it, count, asGroup: asGroup && !it.pc, score: r.score });
     }
     scored.sort((a, b) => b.score - a.score || a.name.length - b.name.length);
     return this.only === "pc" ? scored.slice(0, this.limit) : [...scored.slice(0, this.limit), typed];
@@ -2416,7 +2601,7 @@ class CombatantSuggest extends BaseInputSuggest {
       el.createSpan({ cls: "ri-suggest-kind", text: "as typed" });
       return;
     }
-    el.createSpan({ cls: "ri-suggest-name", text: (it.count > 1 && !it.pc ? `${it.count}× ` : "") + it.name });
+    el.createSpan({ cls: "ri-suggest-name", text: (it.count > 1 && !it.pc ? `${it.count}× ` : "") + it.name + (it.asGroup ? " (one group)" : "") });
     el.createSpan({ cls: `ri-suggest-kind is-${it.kind.toLowerCase()}`, text: it.label });
   }
   selectSuggestion(it) {
@@ -2424,7 +2609,7 @@ class CombatantSuggest extends BaseInputSuggest {
     if (it.asTyped) return this.onAdd(it.text);
     const link = this.app.metadataCache.fileToLinktext(it.file, "", true);
     if (it.pc) return this.onAdd(`[[${link}]] player`);
-    return this.onAdd(`${it.count > 1 ? `${it.count}x ` : ""}[[${link}]]`);
+    return this.onAdd(`${it.count > 1 ? `${it.count}x ` : ""}[[${link}]]${it.asGroup ? " group" : ""}`);
   }
 }
 
@@ -2512,7 +2697,8 @@ function parseEncounterCreature(entry) {
     if (low.includes("hidden")) out.hidden = true;
     if (low.some((x) => x === "ally" || x === "friend" || x === "friendly")) out.disp = "ally";
     if (low.includes("neutral")) out.disp = "neutral";
-    return arr.filter((x) => !["hidden", "ally", "friend", "friendly", "neutral"].includes(String(x).trim().toLowerCase()));
+    if (low.some((x) => GROUP_WORDS.includes(x))) out.group = true;
+    return arr.filter((x) => !["hidden", "ally", "friend", "friendly", "neutral", ...GROUP_WORDS].includes(String(x).trim().toLowerCase()));
   };
   if (typeof val === "string") {
     const parts = flags(val.split(/,\s*/));
@@ -2536,6 +2722,7 @@ function parseEncounterCreature(entry) {
     if (val.hidden) out.hidden = true;
     if (val.ally || val.friend || val.friendly) out.disp = "ally";
     if (val.neutral) out.disp = "neutral";
+    if (val.group || val.mob || val.minions) out.group = true;
   }
   if (out.display) out.name = out.display;
   if (!out.name && !out.link) return null;
@@ -2601,6 +2788,7 @@ function serializeEncounterSpec(spec) {
         if (c.hidden) out.push("    hidden: true");
         if (c.disp === "ally") out.push("    ally: true");
         if (c.disp === "neutral") out.push("    neutral: true");
+        if (c.group) out.push("    group: true");
         continue;
       }
       const extra = [];
@@ -2609,6 +2797,7 @@ function serializeEncounterSpec(spec) {
       for (const n of nums) extra.push(n === undefined ? "" : String(n));
       if (c.hidden) extra.push("hidden");
       if (c.disp === "ally" || c.disp === "neutral") extra.push(c.disp);
+      if (c.group) extra.push("group");
       out.push(`  - ${c.countDice || c.count}: ${[base, ...extra].join(", ")}`);
     }
   }
@@ -2853,6 +3042,14 @@ class EncounterCard extends MarkdownRenderChild {
       if (c.hidden) setIcon(a.createSpan({ cls: "ri-tag is-icon ri-enc-hidden" }), "eye-off");
       // ally / neutral is shown by the token's rim colour (keeps rows compact)
       if (c.disp === "ally" || c.disp === "neutral") a.title = c.disp === "ally" ? "Ally" : "Neutral";
+      if ((c.count || 0) > 1 || c.countDice) {
+        // fight them as one row with a shared HP pool (armies, minions)
+        const g = li.createEl("button", { cls: `ri-enc-group${sc.group ? " is-on" : ""}` });
+        setIcon(g.createSpan({ cls: "ri-enc-group-icon" }), "users");
+        g.setAttr("aria-label", sc.group ? `${c.name}: one group (click to run them one by one)` : `Run ${c.name} as one group`);
+        g.title = sc.group ? "One row, one shared HP pool. Click to run them one by one." : "Run them as one group: one row and a shared HP pool, for armies and minions";
+        g.onclick = (e) => { e.preventDefault(); sc.group = !sc.group; save(); };
+      }
       // HP / AC straight from the statblock (typed numbers only for
       // creatures that have no statblock) + CR, in fixed-width columns.
       const meta = li.createSpan({ cls: "ri-enc-stats is-first" });
@@ -3251,6 +3448,7 @@ class AtlasLink {
     const sheets = this.plugin.combatantIndex().filter((x) => x.pc);
     for (const c of session.enc.combatants) {
       if (map.has(c.name)) continue;
+      if (c.group) continue; // a group row has no single token on the map
       const r = session.r(c);
       let tok = null;
       if (r.kind === "creature" && r.path) {
@@ -3919,6 +4117,22 @@ class RollInitiativePlugin extends Plugin {
       const n = c.countDice ? rollDice(c.countDice) || 1 : c.count;
       if (!n) continue;
       const base = c.link ? linkBasename(c.link) : "";
+      if (c.group && n > 1) {
+        // the whole group in one row with a shared HP pool
+        const parts = [];
+        if (!c.link || c.name !== base) parts.push(c.name);
+        if (c.link) parts.push(`[[${c.link}]]`);
+        parts.push(`group ${n}`);
+        const sb = c.stats || {};
+        if (c.hp !== undefined && sb.hp === undefined) parts.push(`each ${c.hp}`);
+        if (c.ac !== undefined && sb.ac === undefined) parts.push(`ac ${c.ac}`);
+        if (c.mod !== undefined && sb.mod === undefined) parts.push(`mod ${signed(c.mod)}`);
+        if (c.xp !== undefined) parts.push(`xp ${c.xp}`);
+        if (c.hidden) parts.push("hidden");
+        if (c.disp && c.disp !== "enemy") parts.push(c.disp);
+        lines.push(parts.join(" "));
+        continue;
+      }
       const hd = c.stats && c.stats.hitDice;
       if (plan.rollHP && hd && rollDice(hd) !== undefined) {
         // one line per creature, each with its own rolled HP
@@ -4048,4 +4262,5 @@ module.exports._internals = {
   parseEncounterCreature, parseEncounterSpec, isNpcNote, quoteLinks, serializeEncounterSpec, difficultyWord,
   atlasEncounterToSpec, matchSheet, imageBaseName, AtlasLink,
   SYSTEMS, CyberBridge, cpredHit, cpredWoundConditions, cpredDeathSave, statsFromCyberpunk, cpredInitMod,
+  groupAlive, groupAreaHp,
 };

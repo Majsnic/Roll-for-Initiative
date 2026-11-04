@@ -24,6 +24,7 @@ An initiative tracker for [Obsidian](https://obsidian.md) that keeps the whole f
   - HP, temp HP, AC, conditions, exhaustion and death saves are read from the sheet and written back to it.
   - The sheet's own rules apply: temp HP absorbs damage first, 0 HP means dying, three successful saves bring the PC back to 1 HP.
 - **Tokens with number badges**: *Goblin 2* keeps its "2" after sorting.
+- **Armies and minions**: run 40 goblins as **one row with a shared HP pool**, hit the whole group or several members at once, and watch the "27/40 standing" count drop.
 - **Rim colours show the side**: blue = player, red = enemy, yellow = neutral NPC, green = ally. *Charmed* flips the colour.
 - **Encounter cards**: write an encounter in a ` ```roll-encounter ``` ` block (Initiative Tracker syntax) and press **Roll Initiative**.
   - The card has players on the left and creatures on the right, with − / + steppers.
@@ -39,6 +40,29 @@ An initiative tracker for [Obsidian](https://obsidian.md) that keeps the whole f
 | Encounter card | Damage / heal box |
 |---|---|
 | ![Encounter card](docs/screenshots/encounter-card.png) | ![HP box](docs/screenshots/hp-editor.png) |
+
+### Armies and minions (groups)
+
+Large battles stay manageable: a **group** is one row for many identical creatures. They share one initiative and one **HP pool** (HP each × how many).
+
+- **Make a group** in any of these ways:
+  - on an encounter card, click the 👥 button next to a creature with a count above 1;
+  - in the add box, type `40 gob group`;
+  - in the block, write `40x [[Goblin Warrior]] group`;
+  - in the tracker, right-click creatures of the same kind → **Fight as one group**.
+- **The tag** next to the name shows how many are still standing (`👥 27/40`). That's the pool divided by HP each, rounded up.
+- **Damage box** for a group:
+  - **Damage** comes off the shared pool.
+  - **Area** deals the amount to each of **×** targets (empty = everyone standing): *Fireball for 28 on 6 goblins* = 6 goblins down. One member never loses more than its own HP.
+  - **−1** drops members (type a number to drop more).
+  - **Heal** puts HP back into the pool.
+  - **Each** sets HP each and refills the group.
+- **Splitting**: right-click → **Split into individual creatures** turns the survivors back into normal rows. The last one keeps the damage the pool had taken.
+- **Difficulty** counts every member of the group.
+- **Auto-end** triggers when the pool hits 0.
+- **Cyberpunk RED**: one SP value for the whole group, Body / Head / Direct hits come off the pool, and Area hits each target through body SP.
+
+![A group of 40 goblins in a fight](docs/screenshots/groups.png)
 
 ### Cyberpunk RED mode
 

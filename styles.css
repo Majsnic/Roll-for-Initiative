@@ -1284,3 +1284,62 @@ button.ri-cond:hover {
 .ri-hidden {
 	display: none;
 }
+
+/* ---- groups (armies / minions): one row, one shared HP pool ---- */
+.ri-tag.is-group {
+	gap: 4px;
+	color: var(--ri-accent);
+	background: color-mix(in srgb, var(--ri-accent) 15%, transparent);
+	font-variant-numeric: tabular-nums;
+}
+.ri-tag.is-group .ri-tag-icon {
+	display: inline-flex;
+}
+.ri-tag.is-group svg {
+	width: 12px;
+	height: 12px;
+}
+.ri-edit input.ri-targets {
+	width: 6.5em;
+}
+.ri-edit .ri-area {
+	border-color: color-mix(in srgb, var(--color-orange, #e9973f) 70%, transparent);
+}
+.ri-edit .ri-drop {
+	border-color: color-mix(in srgb, var(--ri-bad) 40%, transparent);
+	border-style: dashed;
+}
+.ri .ri-enc-columns ul.ri-enc-list li > .ri-enc-group {
+	flex: none;
+}
+.ri .ri-enc-group {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	color: var(--text-faint);
+	background: transparent;
+	border: 1px dashed var(--background-modifier-border);
+	border-radius: 999px;
+	opacity: 0.6;
+}
+.ri .ri-enc-group:hover {
+	opacity: 1;
+	color: var(--text-muted);
+}
+.ri .ri-enc-group.is-on {
+	opacity: 1;
+	color: var(--text-on-accent, #fff);
+	border-style: solid;
+	border-color: var(--ri-accent);
+	background: var(--ri-accent);
+}
+.ri-enc-group-icon {
+	display: inline-flex;
+}
+.ri-enc-group-icon svg {
+	width: 12px;
+	height: 12px;
+}

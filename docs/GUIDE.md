@@ -39,6 +39,8 @@ Kuo-toa 1 [[Kuo-toa]] init 12 mod +0 hp 11/18 ac 13 (Restrained:2)
 |---|---|
 | `>` at line start | whose turn it is |
 | `2x` / `x2` / leading `2` | add that many (numbered 1, 2…) |
+| `group` / `group 40` | one row for the whole group with a shared HP pool (`40x [[Goblin]] group` or `[[Goblin]] group 40`); also `mob`, `minions`, `horde` |
+| `each 10` | a group's HP per member (filled from the statblock); a group's `hp 263/400` is the pool |
 | `[[Note]]` / `[[Note\|Alias]]` | link to a monster note or a character sheet |
 | `player` / `pc` | player character (sheet PCs are detected automatically) |
 | `init 15` / `init +3` | rolled initiative / modifier |
@@ -93,6 +95,8 @@ creatures:
   - 2: Bandit, 11, 12, 1  # name, hp, ac, initiative modifier
 ```
 ````
+
+Add `group` to fight a whole count as one row: `- 40: [[Goblin Warrior]], group` (or `group: true` in the long form).
 
 `players: [[[Dexar]], [[Brom]]]` or `players: none` work too. Several encounters can share one block, separated by `---`.
 
@@ -189,3 +193,27 @@ Settings → Roll for Initiative → **Game system** switches the rules the plug
 
 - `app.workspace.on("roll-initiative:change", (state) => …)` fires on every change (round, current creature, combatants).
 - To refresh the sheet, the plugin fires `dnd-sheet:main-file-changed`, and `dnd-sheet:conditions-changed` (the sheet's Conditions block listens for the latter since this release).
+
+## Groups (armies and minions)
+
+A group is one row for many identical creatures. They share initiative and an **HP pool** (HP each × size). The tag next to the name shows how many are still standing: the pool divided by HP each, rounded up.
+
+- **Making one:**
+  - the 👥 button on an encounter card row (count above 1);
+  - `40 gob group` in the add box;
+  - `40x [[Goblin Warrior]] group` in the block;
+  - right-click → **Fight as one group**, which merges every creature with the same statblock and keeps their remaining HP.
+- **HP box:**
+  - **Damage** comes off the pool.
+  - **Area** deals the amount to each of **×** targets (empty = all standing). Each member loses at most its own HP.
+  - **−1** drops members (type a number to drop several).
+  - **Heal** puts HP back into the pool.
+  - **Each** sets HP each and refills the group.
+- **Split into individual creatures** (right-click) gives every standing member its own row again. The last member carries the pool's damage.
+- **Difficulty** counts every member. Auto-end triggers when the pool is empty.
+- **Atlas VTT:** live sync leaves group rows out, because a group has no single token.
+- **Cyberpunk RED:**
+  - the group shares one SP value, with no per-member ablation;
+  - Body / Head / Direct hits come off the pool;
+  - Area applies body SP to each target;
+  - groups have no wound states or Death Saves.

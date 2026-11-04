@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.1.0
+**Armies and minions: groups**
+
+A group is one row for many identical creatures, with a shared HP pool and a "standing" count (`👥 27/40`).
+
+Ways to create one:
+- the 👥 toggle on encounter card rows;
+- `40 gob group` in the add box;
+- `40x [[Goblin]] group` in the block;
+- right-click → *Fight as one group*.
+
+Group damage box:
+- **Damage** comes off the pool;
+- **Area** hits × targets for the full amount each;
+- **−1** drops members;
+- **Heal**;
+- **Each** sets HP per member.
+
+Also:
+- Right-click → *Split into individual creatures* turns a group back into rows.
+- Difficulty counts every member; auto-end when the pool is empty.
+- Cyberpunk RED groups: hits through SP come off the pool, and Area hits each target.
+
+Block syntax: `group N`, `each N` (also `mob`, `minions`, `horde`). Encounter YAML: `- 40: [[Goblin]], group`.
+
 ## 1.0.1
 - **CSS lint clean:**
   - removed `subgrid`, `display: contents`, `column-gap` and `!important` from `styles.css`;
