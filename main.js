@@ -87,6 +87,7 @@ const DEFAULT_SETTINGS = {
   showCasualties: true,
   playerScreenBars: "all", // "all" | "players" | "none"
   askDamageTarget: true, // rolled damage / healing asks who takes it
+  playerScreenMonsterConc: false, // players don't see that a monster is concentrating
   party: "",
   active: null, // { path, id }
 };
@@ -440,6 +441,7 @@ function statsFromCreature(obj) {
   out.xp = toInt(obj.xp) ?? xpForCr(out.cr);
   if (typeof obj.image === "string") out.image = obj.image;
   if (typeof obj.name === "string") out.name = obj.name;
+  out.conSave = conSaveFrom(obj);
   return out;
 }
 
@@ -630,6 +632,30 @@ function healMonster(c, amount) {
 }
 
 const concentrationDc = (damage) => Math.min(30, Math.max(10, Math.floor(damage / 2)));
+/** The "Concentrating" condition on a combatant (any spelling that starts with "concentrat"). */
+const concentrationCond = (conditions) => (conditions || []).find((x) => String(x.name || "").toLowerCase().startsWith("concentrat")) || null;
+
+/** CON saving throw bonus from a statblock / frontmatter object: `saves`
+ *  (list of { constitution: 5 }, an object, or "Con +5, Wis +2"), else the CON score. */
+function conSaveFrom(obj) {
+  if (!obj || typeof obj !== "object") return undefined;
+  const isCon = (k) => /^con(stitution)?$/i.test(String(k).trim());
+  const sv = obj.saves ?? obj.saving_throws ?? obj.savingThrows;
+  const scan = (x) => {
+    if (x == null) return undefined;
+    if (Array.isArray(x)) { for (const y of x) { const v = scan(y); if (v !== undefined) return v; } return undefined; }
+    if (typeof x === "object") { for (const [k, v] of Object.entries(x)) if (isCon(k)) return toInt(v); return undefined; }
+    const m = /\bcon(?:stitution)?\b\s*([+-−]\s*\d+)/i.exec(String(x));
+    return m ? toInt(m[1].replace("−", "-").replace(/\s+/g, "")) : undefined;
+  };
+  const fromSaves = scan(sv);
+  if (fromSaves !== undefined) return fromSaves;
+  let stats = obj.stats;
+  if (typeof stats === "string") stats = (stats.match(/-?\d+/g) || []).map(Number);
+  if (Array.isArray(stats) && stats.length > 2 && toInt(stats[2]) !== undefined) return abilityMod(toInt(stats[2]));
+  const con = toInt(obj.con) ?? toInt(obj.constitution) ?? toInt(obj.con_score);
+  return con !== undefined ? abilityMod(con) : undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Vault access: finding / writing blocks, resolving creatures and sheets
@@ -987,8 +1013,11 @@ class SheetBridge {
     const classes = fm.cssclasses || [];
     const initMod = toInt(ab.initiative);
     const dex = toInt(ab.dex_score);
+    const conEntry = Array.isArray(ab.saves_list) ? ab.saves_list.find((x) => x && String(x.ability || "").toUpperCase() === "CON") : null;
+    const conSave = toInt(conEntry && conEntry.mod) ?? toInt(ab.con_mod) ?? (toInt(ab.con_score) !== undefined ? abilityMod(toInt(ab.con_score)) : undefined);
     return {
       kind: "sheet",
+      conSave,
       file,
       path: file.path,
       watch: [file.path, abPath, condPath],
@@ -1051,6 +1080,7 @@ class SheetBridge {
     let out;
     await this.app.fileManager.processFrontMatter(file, (fm) => {
       res = sheetApplyDamage(fm, amount);
+      res.hp = Number(fm.hp_current || 0);
       fm.dmg_amount = 0;
       out = fm;
     });
@@ -1372,6 +1402,7 @@ class Session {
         conditions: r.conditions, exhaustion: r.exhaustion, dying: r.dying, dead: r.dead,
         deathSaves: r.deathSaves, level: r.level, image: r.image, live: true,
         sp: r.sp, body: r.body, deathPenalty: r.deathPenalty, system: r.system, cls: r.cls,
+        conSave: r.conSave,
       };
     }
     return {
@@ -1380,6 +1411,7 @@ class Session {
       image: r.image, live: false,
       sp: c.sp, body: c.body ?? r.body, deathPenalty: c.dsp || 0, threat: r.threat,
       dead: (c.conditions || []).some((x) => x.name === "Dead"),
+      conSave: c.con ?? r.conSave,
       ...this.groupStat(c, r),
     };
   }
@@ -1771,11 +1803,13 @@ class Session {
     }
     const amt = Math.abs(amount);
     const s = this.stat(c);
-    const concentrating = (s.conditions || []).some((x) => x.name.toLowerCase().startsWith("concentrat"));
+    const concentrating = !!concentrationCond(s.conditions);
+    let hpAfter;
     if (this.isLive(c)) {
       const file = this.r(c).file;
       if (mode === "damage") {
         const res = await this.plugin.bridge.damage(file, amt);
+        hpAfter = res && res.hp;
         if (res.deathFail) new Notice(`${c.name} took damage at 0 HP: death save failure`);
       } else if (mode === "heal") await this.plugin.bridge.heal(file, amt);
       else if (mode === "temp") await this.plugin.bridge.setTemp(file, amt);
@@ -1791,9 +1825,21 @@ class Session {
       this.checkAutoEnd();
       await this.commit();
     }
-    if (mode === "damage" && amt > 0 && concentrating && this.plugin.sys.concentration && this.plugin.settings.concentrationReminder) {
-      new Notice(`${c.name}: Constitution save DC ${concentrationDc(amt)} to keep concentration`, 8000);
+    if (mode === "damage" && amt > 0 && concentrating && this.plugin.concentrationOn()) await this.concentrationCheck(c, amt, hpAfter ?? c.hp);
+  }
+
+  /** A concentrating creature took damage: a save card (or concentration ends at 0 HP). */
+  async concentrationCheck(c, damage, hpAfter) {
+    const s = this.stat(c);
+    const cond = concentrationCond(s.conditions);
+    if (!cond) return;
+    const hp = hpAfter ?? s.hp;
+    if (hp !== undefined && hp <= 0) {
+      await this.removeCondition(c, cond.name);
+      this.plugin.addConcentrationCheck(this, { name: c.name, damage, dc: concentrationDc(damage), bonus: s.conSave ?? 0, result: { ended: "0hp" } });
+      return;
     }
+    this.plugin.addConcentrationCheck(this, { name: c.name, damage, dc: concentrationDc(damage), bonus: s.conSave ?? 0, result: null });
   }
 
   /** HP set on the Atlas map. */
@@ -1961,6 +2007,42 @@ class EncounterUI {
 
   /** Creatures that share one statblock get a little number on their token.
    *  Returns Map(combatant -> number) only for groups with 2+ members. */
+  /** "Concentrating: …" strip and the CON save cards. */
+  drawConcentration(root) {
+    const session = this.session;
+    const who = session.enc.combatants.filter((c) => concentrationCond(session.stat(c).conditions));
+    if (who.length) {
+      const strip = root.createDiv({ cls: "ri-conc-strip" });
+      setIcon(strip.createSpan({ cls: "ri-conc-icon" }), "sparkles");
+      strip.createSpan({ cls: "ri-conc-label", text: "Concentrating" });
+      for (const c of who) strip.createSpan({ cls: "ri-conc-name", text: c.name });
+    }
+    for (const check of this.plugin.concentrationChecksFor(session)) {
+      const card = root.createDiv({ cls: "ri-conc-card" });
+      const body = card.createDiv({ cls: "ri-conc-body" });
+      const head = body.createDiv({ cls: "ri-conc-title" });
+      head.createSpan({ cls: "ri-conc-who", text: check.name });
+      head.createSpan({ text: ` took ${check.damage} damage` });
+      const r = check.result;
+      if (r && r.ended === "0hp") {
+        card.addClass("is-lost");
+        body.createDiv({ cls: "ri-conc-line", text: "Dropped to 0 HP - concentration ends." });
+      } else if (r) {
+        card.addClass(r.kept ? "is-kept" : "is-lost");
+        body.createDiv({ cls: "ri-conc-line", text: `CON save ${r.total} vs DC ${check.dc} - ${r.kept ? "keeps concentration" : "loses concentration"}` });
+      } else {
+        body.createDiv({ cls: "ri-conc-line", text: `Constitution save DC ${check.dc} to keep concentration` });
+        const roll = card.createEl("button", { cls: "ri-conc-roll mod-cta", text: check.rolling ? "Rolling…" : `Roll CON save (${signed(check.bonus || 0)})` });
+        roll.disabled = !!check.rolling;
+        roll.onclick = () => this.plugin.rollConcentrationSave(session, check);
+      }
+      const x = card.createEl("button", { cls: "ri-conc-x" });
+      setIcon(x, "x");
+      x.setAttr("aria-label", "Dismiss");
+      x.onclick = () => this.plugin.dismissConcentrationCheck(session, check.key);
+    }
+  }
+
   tokenNumbers() {
     const groups = new Map();
     for (const c of this.session.enc.combatants) {
@@ -2052,6 +2134,9 @@ class EncounterUI {
       other.createSpan({ text: `This is a separate fight - the sidebar is running ${active.path.split("/").pop().replace(/\.md$/, "")}. Changes here won't show there.` });
       this.button(other, "panel-right", "Run this one in sidebar", "ri-other-btn", () => this.plugin.openInSidebar(session));
     }
+
+    // ---- concentration at a glance ----
+    if (this.plugin.concentrationOn()) this.drawConcentration(root);
 
     // ---- rows ----
     const list = root.createDiv({ cls: "ri-list" });
@@ -2179,6 +2264,13 @@ class EncounterUI {
     if (disp === "ally") top.createSpan({ cls: "ri-tag is-ally", text: "ALLY" });
     else if (disp === "neutral") top.createSpan({ cls: "ri-tag is-neutral", text: "NEUTRAL" });
     if (c.hidden) setIcon(top.createSpan({ cls: "ri-tag is-icon" }), "eye-off");
+    const concCond = this.plugin.concentrationOn() ? concentrationCond(s.conditions) : null;
+    if (concCond) {
+      const b = top.createEl("button", { cls: "ri-tag is-conc", text: "Concentrating" });
+      b.setAttr("aria-label", `${c.name} is concentrating - click to end it`);
+      b.title = `Concentrating (CON save ${signed(s.conSave ?? 0)}). Click to end concentration.`;
+      b.onclick = () => this.session.removeCondition(c, concCond.name);
+    }
     if (s.group) {
       const g = top.createSpan({ cls: "ri-tag is-group" });
       setIcon(g.createSpan({ cls: "ri-tag-icon" }), "users");
@@ -2244,6 +2336,7 @@ class EncounterUI {
     if (s.dead && !(s.conditions || []).some((x) => x.name === "Dead")) conds.createSpan({ cls: "ri-cond is-dead", text: "Dead" });
     if (s.exhaustion) conds.createSpan({ cls: "ri-cond is-exhaustion", text: `Exhaustion ${s.exhaustion}` });
     for (const cond of s.conditions || []) {
+      if (concCond && cond === concCond) continue; // shown as the purple badge
       const chip = conds.createEl("button", { cls: "ri-cond", text: cond.dur !== undefined ? `${cond.name} ${cond.dur}` : cond.name });
       chip.setAttr("aria-label", `Remove ${cond.name}`);
       chip.title = cond.dur !== undefined ? `${cond.dur} more turn(s) - click to remove` : "Click to remove";
@@ -3578,6 +3671,18 @@ function renderPlayerView(el, plugin, session) {
   const ui = { app: plugin.app, session };
   const numbers = EncounterUI.prototype.tokenNumbers.call(ui);
   const bars = plugin.settings.playerScreenBars || "all";
+  const concOn = plugin.concentrationOn();
+  // Concentration is silent in the fiction: by default players only see their own
+  const concVisible = (c) => c.player || !!plugin.settings.playerScreenMonsterConc;
+  if (concOn) {
+    const who = enc.combatants.filter((c) => !c.hidden && concVisible(c) && concentrationCond(session.stat(c).conditions));
+    if (who.length) {
+      const strip = root.createDiv({ cls: "ri-conc-strip" });
+      setIcon(strip.createSpan({ cls: "ri-conc-icon" }), "sparkles");
+      strip.createSpan({ cls: "ri-conc-label", text: "Concentrating" });
+      for (const c of who) strip.createSpan({ cls: "ri-conc-name", text: c.name });
+    }
+  }
   const list = root.createDiv({ cls: "ri-list" });
   let shown = 0;
   for (const c of enc.combatants) {
@@ -3652,7 +3757,12 @@ function renderPlayerView(el, plugin, session) {
     const conds = main.createDiv({ cls: "ri-conds" });
     if (s.dead && !(s.conditions || []).some((x) => x.name === "Dead")) conds.createSpan({ cls: "ri-cond is-dead", text: "Dead" });
     if (s.exhaustion) conds.createSpan({ cls: "ri-cond is-exhaustion", text: `Exhaustion ${s.exhaustion}` });
-    for (const cond of s.conditions || []) conds.createSpan({ cls: "ri-cond", text: cond.dur !== undefined ? `${cond.name} ${cond.dur}` : cond.name });
+    const cc = concentrationCond(s.conditions);
+    if (cc && concOn && concVisible(c)) top.createSpan({ cls: "ri-tag is-conc", text: "Concentrating" });
+    for (const cond of s.conditions || []) {
+      if (cond === cc && (concOn || !concVisible(c))) continue; // badge instead, or a monster's (hidden)
+      conds.createSpan({ cls: "ri-cond", text: cond.dur !== undefined ? `${cond.name} ${cond.dur}` : cond.name });
+    }
   }
   if (!shown) list.createDiv({ cls: "ri-empty", text: "Waiting for the fight to start…" });
   return root;
@@ -3711,8 +3821,9 @@ function diceRollContext(el, noteOf) {
   const isD20 = /(^|[^\d])1?d20/.test(formula);
   const cell = el.closest && el.closest(".dice-roll-cell");
   if (cell) {
+    // climb to the whole row (spell rows wrap their cells in .spell-stats-wrap since sheet 1.8)
     let row = cell.parentElement;
-    while (row && !row.querySelector(".action-name") && row.parentElement && row.querySelectorAll(".dice-roll-cell").length < 2) row = row.parentElement;
+    for (let depth = 0; row && depth < 6 && !row.querySelector(".action-name") && !row.matches(".spell-row, .action-row") && row.parentElement; depth++) row = row.parentElement;
     if (row) {
       const cells = Array.from(row.querySelectorAll(".dice-roll-cell"));
       const idx = cells.indexOf(cell);
@@ -4471,7 +4582,7 @@ class InitiativeSettingTab extends PluginSettingTab {
     toggle("Ask players for initiative", "Roll opens a window to type each player's roll. Off: players keep the initiative already in the block, anyone without one is rolled (like Quick Initiative).", "askPlayerInitiative");
     toggle("Always reroll players", "Roll ignores players' existing initiative and rolls for them too.", "autoRollPlayers");
     toggle("Skip monsters at 0 HP", "Next turn skips monsters that are down. Players are never skipped (death saves).", "skipDown");
-    if (p.sys.id === "dnd5e") toggle("Concentration reminder", "Show the Constitution save DC when a concentrating creature takes damage.", "concentrationReminder");
+    if (p.sys.id === "dnd5e") toggle("Concentration at a glance", "Creatures with the Concentrating condition get a purple badge and are listed at the top of the tracker. When one takes damage, a card shows the Constitution save DC with a \"Roll CON save\" button (the bonus comes from the character sheet or the statblock) and tells you whether they keep concentration. At 0 HP concentration ends by itself.", "concentrationReminder");
     if (p.sys.id === "dnd5e") toggle("Show encounter difficulty", "2024 XP budget from party levels and monster CR.", "showDifficulty");
     toggle("Open sidebar when combat starts", "Rolling initiative in a note also shows it in the sidebar.", "openSidebarOnStart");
     toggle("End combat when all enemies are down", "Marks the initiative as ended as soon as every enemy (red) is at 0 HP. Off: end it yourself with the ■ button.", "autoEnd");
@@ -4503,6 +4614,7 @@ class InitiativeSettingTab extends PluginSettingTab {
         ? "TTRPG Tools - Player Screen is enabled. Use the monitor button in the tracker (or the \"Show initiative on player screen\" command): your players see the order, turns, conditions and groups live - never HP numbers or AC, and nothing you've hidden."
         : "Install and enable \"TTRPG Tools - Player Screen\" to show the initiative to your players on a second screen.",
     });
+    toggle("Show monsters' concentration on the player screen", "Off (default): players only see their own characters' Concentrating badge - concentration is silent in the fiction, they only see the spell's effect.", "playerScreenMonsterConc");
     new Setting(containerEl)
       .setName("Health bars on the player screen")
       .setDesc("The coloured bar under each name (it shows how hurt someone is, never the numbers).")
@@ -4573,7 +4685,7 @@ class InitiativeSettingTab extends PluginSettingTab {
 // Plugin
 // ---------------------------------------------------------------------------
 
-const API_VERSION = "1.6.0";
+const API_VERSION = "1.7.2";
 const TEMPLATE = "```" + BLOCK + "\nname New encounter\nparty\n2x [[Goblin Warrior]]\n```\n";
 const ENCOUNTER_TEMPLATE = "```" + ENCOUNTER_BLOCK + "\n```\n";
 
@@ -4747,7 +4859,7 @@ class RollInitiativePlugin extends Plugin {
    *  takes longer than 15 s - with the internal dice exactly as before. */
   async rollMany(requests) {
     if (!requests || !requests.length) return [];
-    const internal = () => requests.map((r) => (r.kind === "initiative" ? this.initRoll() + (r.mod || 0) : rollDice(r.formula) ?? 0));
+    const internal = () => requests.map((r) => (r.kind === "initiative" ? this.initRoll() + (r.mod || 0) : r.kind === "save" ? Math.floor(Math.random() * 20) + 1 + (r.mod || 0) : rollDice(r.formula) ?? 0));
     const roller = this.roller;
     if (!roller) return internal();
     const pub = requests.map((r) => ({ formula: r.formula, label: r.label, kind: r.kind, sourcePath: r.sourcePath, id: r.id }));
@@ -4879,6 +4991,8 @@ class RollInitiativePlugin extends Plugin {
           off: !!c.off,
           current: !!c.current,
           group: st.group ? { size: st.group, alive: st.alive, each: st.each ?? null } : null,
+          concentrating: !!concentrationCond(st.conditions),
+          conSave: st.conSave ?? null,
         };
       }),
     };
@@ -5144,10 +5258,32 @@ class RollInitiativePlugin extends Plugin {
     return { name, path: file.path };
   }
 
+  /** The "Damage / Effect" of a spell note named `action` (One DnD Character
+   *  Sheet spell rows only show the dice, e.g. "2d8", since sheet 1.7): tells
+   *  healing from damage and gives the damage type. */
+  spellEffect(action, sourcePath = "") {
+    const name = String(action || "").replace(/\s*↑$/, "").trim();
+    if (!name) return null;
+    const f = this.app.metadataCache.getFirstLinkpathDest(name, sourcePath);
+    if (!(f instanceof TFile)) return null;
+    const fm = (this.app.metadataCache.getFileCache(f) || {}).frontmatter || {};
+    const eff = fm["Damage / Effect"] ?? fm["Damage/Effect"] ?? fm.damage_effect;
+    if (eff === undefined || eff === null || eff === "") return null;
+    const rest = String(eff).replace(/^\s*(?:\d+d\d+)(?:\s*[+-]\s*(?:\d+d\d+|\d+|[a-z_]+))*\s*/i, "").trim();
+    if (/heal|léč/i.test(String(eff))) return { kind: "healing", damageType: null };
+    return { kind: "damage", damageType: rest && rest.length < 30 ? rest : null };
+  }
+
   /** A damage / healing roll: ask who takes it (running fights only, unless forced by the API). */
   async onRolled(r, force = false) {
     if (!r) return false;
     if (!force && !this.settings.askDamageTarget) return false;
+    // A sheet spell roll comes without its damage type: read it from the spell note
+    const k0 = String(r.kind || "").toLowerCase();
+    if ((k0 === "damage" || k0 === "healing" || k0 === "heal") && !r.damageType && r.action) {
+      const sp = this.spellEffect(r.action, r.whoPath || "");
+      if (sp) r = { ...r, kind: sp.kind, damageType: sp.damageType };
+    }
     const kind = String(r.kind || "").toLowerCase();
     const heal = kind === "healing" || kind === "heal";
     if (!heal && kind !== "damage") return false;
@@ -5166,6 +5302,51 @@ class RollInitiativePlugin extends Plugin {
     if (!req) { this.damagePrompt = null; return; }
     this.damagePrompt = new DamageTargetModal(this, req, () => this.nextDamagePrompt());
     this.damagePrompt.open();
+  }
+
+  // ---- concentration at a glance ----
+  concentrationOn() {
+    return !!(this.sys.concentration && this.settings.concentrationReminder);
+  }
+  concKey(session) { return `${session.sourcePath}|${session.enc.id || ""}`; }
+  concentrationChecksFor(session) {
+    return (this.concChecks && this.concChecks.get(this.concKey(session))) || [];
+  }
+  addConcentrationCheck(session, check) {
+    this.concChecks = this.concChecks || new Map();
+    const k = this.concKey(session);
+    const list = (this.concChecks.get(k) || []).filter((x) => !(x.result && x.name === check.name)); // drop that creature's old finished cards
+    check.key = randomId();
+    list.push(check);
+    this.concChecks.set(k, list.slice(-6));
+    this.redrawFight(session);
+  }
+  dismissConcentrationCheck(session, key) {
+    const k = this.concKey(session);
+    this.concChecks && this.concChecks.set(k, this.concentrationChecksFor(session).filter((x) => x.key !== key));
+    this.redrawFight(session);
+  }
+  redrawFight(session) {
+    session.emit();
+    this.app.workspace.trigger("roll-initiative:change", this.stateOf(session));
+  }
+  /** Roll the CON save for a check card (through the dice hook) and apply the result. */
+  async rollConcentrationSave(session, check) {
+    if (check.result || check.rolling) return;
+    check.rolling = true;
+    this.redrawFight(session);
+    const [total] = await this.rollMany([{ formula: `1d20${check.bonus ? signed(check.bonus) : ""}`, label: `${check.name}: Concentration (DC ${check.dc})`, kind: "save", sourcePath: session.sourcePath, id: session.enc.id || "", mod: check.bonus || 0 }]);
+    check.rolling = false;
+    const kept = total >= check.dc;
+    check.result = { total, kept };
+    if (!kept) {
+      const c = session.enc.combatants.find((x) => x.name === check.name);
+      const cond = c && concentrationCond(session.stat(c).conditions);
+      if (c && cond) await session.removeCondition(c, cond.name);
+    }
+    new Notice(`${check.name}: ${total} vs DC ${check.dc} - ${kept ? "keeps concentration" : "loses concentration"}`);
+    this.redrawFight(session);
+    return check.result;
   }
 
   /** api.newCombat: open the New combat window; resolves with what was made, or null. */
@@ -5419,5 +5600,5 @@ module.exports._internals = {
   parseEncounterCreature, parseEncounterSpec, isNpcNote, quoteLinks, serializeEncounterSpec, difficultyWord,
   atlasEncounterToSpec, matchSheet, imageBaseName, AtlasLink,
   SYSTEMS, CyberBridge, cpredHit, cpredWoundConditions, cpredDeathSave, statsFromCyberpunk, cpredInitMod,
-  groupAlive, groupAreaHp, groupChunks, specAddText, folderPath, renderPlayerView, PlayerScreenChild, CombatWizardModal, DamageTargetModal, damageTargets, diceRollContext,
+  groupAlive, groupAreaHp, groupChunks, specAddText, folderPath, renderPlayerView, PlayerScreenChild, CombatWizardModal, DamageTargetModal, damageTargets, diceRollContext, conSaveFrom, concentrationCond,
 };
