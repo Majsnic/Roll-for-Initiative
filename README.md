@@ -73,6 +73,23 @@ Large battles stay manageable: a **group** is one row for many identical creatur
 |---|---|
 | ![Groups of 10 on the encounter card](docs/screenshots/group-card.png) | ![−3 over the HP bar](docs/screenshots/casualty.png) |
 
+### Concentration at a glance
+
+- **Badge:** anyone with the **Concentrating** condition gets a purple **Concentrating** badge on their row. Click it to end concentration.
+- **Strip:** the top of the tracker lists everyone who's concentrating.
+- **Save card:** when someone who's concentrating loses HP, a card shows the **Constitution save DC** (half the damage, at least 10, at most 30) and a **Roll CON save (+X)** button.
+  - The roll goes through the dice hook, so it shows in the GM screen's dice tray.
+  - The card then says whether they **keep** or **lose** concentration.
+  - A lost save removes the condition, from the character sheet too.
+- **Where the CON bonus comes from:**
+  - characters: the character sheet's saving throws;
+  - monsters: the statblock's `saves`, or its CON score.
+- **At 0 HP** concentration ends by itself.
+- **Player screen:** players see their own characters' badge and strip. A monster's concentration stays hidden, because concentrating is silent and only the spell's effect is visible. Turn on *Show monsters' concentration on the player screen* to reveal it.
+- Turn it off under **Settings → Combat → Concentration at a glance**.
+
+![Concentration at a glance](docs/screenshots/concentration.png)
+
 ### Rolled damage and healing: "Who takes the damage?"
 
 During a fight, when someone rolls **damage** or **healing**, a window asks **Who takes the damage?** (or **Who takes the heal?**). It catches rolls from:

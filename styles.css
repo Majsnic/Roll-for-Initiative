@@ -1735,3 +1735,115 @@ button.ri-cond:hover {
 .ri-dmg .ri-dmg-several {
 	margin-right: auto;
 }
+
+/* ---- concentration at a glance ---- */
+.ri,
+.ri-wizard,
+.ri-dmg {
+	--ri-conc: var(--color-purple, #a882ff);
+}
+.ri .ri-tag.is-conc {
+	color: #fff;
+	background: color-mix(in srgb, var(--ri-conc) 75%, transparent);
+	border: 0;
+	padding: 1px 7px;
+	font-size: 0.7em;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	cursor: pointer;
+}
+.ri .ri-tag.is-conc:hover {
+	background: var(--ri-conc);
+}
+.ri-player-view .ri-tag.is-conc {
+	cursor: default;
+}
+.ri-conc-strip {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin: 6px 0 4px;
+	padding: 5px 10px;
+	border-radius: var(--ri-radius);
+	background: color-mix(in srgb, var(--ri-conc) 14%, transparent);
+	border: 1px solid color-mix(in srgb, var(--ri-conc) 40%, transparent);
+	font-size: 0.85em;
+}
+.ri-conc-icon {
+	display: inline-flex;
+	color: var(--ri-conc);
+}
+.ri-conc-icon svg {
+	width: 14px;
+	height: 14px;
+}
+.ri-conc-label {
+	font-weight: 700;
+	color: var(--ri-conc);
+	margin-right: 2px;
+}
+.ri-conc-name {
+	padding: 1px 8px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--ri-conc) 22%, transparent);
+	color: var(--text-normal);
+}
+.ri-conc-card {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin: 6px 0;
+	padding: 8px 10px;
+	border-radius: var(--ri-radius);
+	border: 1px solid color-mix(in srgb, var(--ri-conc) 55%, transparent);
+	border-left: 4px solid var(--ri-conc);
+	background: color-mix(in srgb, var(--ri-conc) 10%, var(--background-primary));
+}
+.ri-conc-card.is-kept {
+	border-left-color: var(--ri-ok);
+}
+.ri-conc-card.is-lost {
+	border-left-color: var(--ri-bad);
+}
+.ri-conc-body {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+.ri-conc-title {
+	font-size: 0.9em;
+}
+.ri-conc-who {
+	font-weight: 700;
+}
+.ri-conc-line {
+	font-size: 0.85em;
+	color: var(--text-muted);
+}
+.ri-conc-card.is-kept .ri-conc-line {
+	color: var(--ri-ok);
+	font-weight: 600;
+}
+.ri-conc-card.is-lost .ri-conc-line {
+	color: var(--ri-bad);
+	font-weight: 600;
+}
+.ri .ri-conc-roll {
+	flex: none;
+	padding: 4px 10px;
+	border-radius: var(--radius-s, 4px);
+	background: var(--ri-conc);
+	color: #fff;
+	font-weight: 600;
+}
+.ri .ri-conc-x {
+	flex: none;
+	padding: 2px;
+	background: transparent;
+	color: var(--text-faint);
+}
+.ri .ri-conc-x svg {
+	width: 14px;
+	height: 14px;
+}

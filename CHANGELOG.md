@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.7.2
+Checked against One DnD Character Sheet 1.8.0:
+- **Fix:** sheet 1.8 spell rows are laid out differently, and "Who takes the damage?" showed the casting time ("1A") instead of the spell's name. It now shows the spell or weapon name again.
+- Healing vs damage and the damage type (now written after the dice again, with no separate Type column) are read correctly from the Spells and Actions tabs.
+
+## 1.7.1
+Checked against One DnD Character Sheet 1.7.0:
+- **Fix:** sheet spell rows now show only the dice ("2d8", not "2d8 Healing"). "Who takes the damage?" now reads the spell note's *Damage / Effect*, so healing spells ask **Who takes the heal?** and damage spells keep their type (Fire, Thunder…).
+- The sheet's new **Cast** button puts *Concentrating* on the character, and Roll for Initiative picks it up right away (badge, list, save cards).
+
+## 1.7.0
+**Concentration at a glance**
+- A purple **Concentrating** badge on everyone concentrating (click it to end concentration), and a strip at the top of the tracker that lists them.
+- When someone concentrating loses HP, a card shows the Constitution save DC with a **Roll CON save (+X)** button.
+  - The CON bonus comes from the character sheet's saving throws, or the statblock's saves / CON score.
+  - The card says whether they keep or lose concentration, and a lost save removes the condition.
+  - The roll goes through the dice hook, so it shows in the GM screen's tray.
+- Concentration ends by itself at 0 HP.
+- The player screen shows players their own characters' badge and strip. Monsters' concentration stays hidden, because concentrating is silent in the fiction. Show it with *Settings → Player screen → Show monsters' concentration on the player screen*.
+- The old *Concentration reminder* setting is now *Settings → Combat → Concentration at a glance*.
+- API: `getState()` combatants now include `concentrating` and `conSave`.
+
 ## 1.6.0
 **"Who takes the damage?"**
 
