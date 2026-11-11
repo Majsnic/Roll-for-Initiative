@@ -631,6 +631,15 @@ function healMonster(c, amount) {
   c.hp = Math.min(c.maxHp ?? Infinity, c.hp + Math.abs(amount));
 }
 
+/** Health bar colour: green at full HP, yellow once damaged, orange when
+ *  bloodied (half HP or less), red at a quarter of max or less (critical). */
+function hpBand(hp, max) {
+  if (hp === undefined || hp === null || !max) return "ri-ok";
+  if (hp >= max) return "ri-ok";
+  if (hp <= max * 0.25) return "ri-bad";
+  if (hp <= max * 0.5) return "ri-bloodied";
+  return "ri-hurt";
+}
 const concentrationDc = (damage) => Math.min(30, Math.max(10, Math.floor(damage / 2)));
 /** The "Concentrating" condition on a combatant (any spelling that starts with "concentrat"). */
 const concentrationCond = (conditions) => (conditions || []).find((x) => String(x.name || "").toLowerCase().startsWith("concentrat")) || null;
@@ -992,6 +1001,22 @@ class SheetBridge {
   isSheet(fm) {
     if (!fm) return false;
     return !!(fm.data_id || (fm.hp_max !== undefined && fm.armor_class !== undefined && fm.character_name !== undefined));
+  }
+
+  /** A file inside a character's data folder (e.g. the Atlas.md statblock the
+   *  sheet writes for Atlas VTT since sheet 1.8: `<data folder>/<data_id>/Atlas.md`)
+   *  -> that character's main note, or null. */
+  sheetOfCompanion(file) {
+    if (!file || !file.path) return null;
+    const base = folderPath(this.dataFolder);
+    if (!base || !file.path.startsWith(base + "/")) return null;
+    const id = file.path.slice(base.length + 1).split("/")[0];
+    if (!id || id === file.path.slice(base.length + 1)) return null;
+    for (const f of this.app.vault.getMarkdownFiles()) {
+      const fm = (this.app.metadataCache.getFileCache(f) || {}).frontmatter;
+      if (fm && String(fm.data_id || "") === id && f.path !== file.path && !f.path.startsWith(base + "/")) return f;
+    }
+    return null;
   }
   companionPath(fm, file, kind) {
     const id = fm.data_id || file.basename;
@@ -2302,7 +2327,7 @@ class EncounterUI {
       const bar = main.createDiv({ cls: "ri-bar" });
       const fill = bar.createDiv({ cls: "ri-bar-fill" });
       setCssVars(fill, { "--ri-pct": `${Math.round(ratio * 100)}%` });
-      fill.addClass(ratio > 0.5 ? "ri-ok" : ratio > 0.25 ? "ri-hurt" : "ri-bad");
+      fill.addClass(hpBand(s.hp, max));
       if (s.temp) {
         const t = bar.createDiv({ cls: "ri-bar-temp" });
         setCssVars(t, { "--ri-temp-pct": `${Math.round(Math.min(1, s.temp / max) * 100)}%` });
@@ -3741,7 +3766,7 @@ function renderPlayerView(el, plugin, session) {
       const bar = main.createDiv({ cls: "ri-bar" });
       const fill = bar.createDiv({ cls: "ri-bar-fill" });
       setCssVars(fill, { "--ri-pct": `${Math.round(ratio * 100)}%` });
-      fill.addClass(ratio > 0.5 ? "ri-ok" : ratio > 0.25 ? "ri-hurt" : "ri-bad");
+      fill.addClass(hpBand(s.hp, max));
     }
 
     // death saves (read-only)
@@ -4174,7 +4199,9 @@ class AtlasLink {
       sheets,
       fileFor: (p) => {
         const f = this.app.vault.getAbstractFileByPath(obsidian.normalizePath ? obsidian.normalizePath(p) : p);
-        return f instanceof TFile ? f : null;
+        if (!(f instanceof TFile)) return null;
+        // a character token links to the sheet's Atlas.md statblock: use the character note
+        return this.plugin.bridge.sheetOfCompanion(f) || f;
       },
       isSheetFile: (f) => this.plugin.bridge.isSheet((mc.getFileCache(f) || {}).frontmatter, f),
       linkFor: (f) => mc.fileToLinktext(f, "", true),
@@ -4340,7 +4367,13 @@ class AtlasLink {
         const cands = free.filter((t) => samePath(t.statblockPath, r.path));
         tok = cands.find((t) => norm(t.name) === norm(c.name)) || cands[0] || null;
       } else if (r.kind === "sheet") {
+        // the token's statblock is this character's Atlas.md (sheet 1.8+), else match by name / image
         tok = free.find((t) => {
+          if (!t.statblockPath) return false;
+          const f = this.app.vault.getAbstractFileByPath(obsidian.normalizePath ? obsidian.normalizePath(t.statblockPath) : t.statblockPath);
+          const main = f instanceof TFile ? this.plugin.bridge.sheetOfCompanion(f) : null;
+          return !!main && main.path === r.path;
+        }) || free.find((t) => {
           const m = matchSheet(sheets.filter((s) => s.file.path === r.path), [t.name, imageBaseName(t.imagePath)]);
           return !!m;
         }) || null;
@@ -4685,7 +4718,7 @@ class InitiativeSettingTab extends PluginSettingTab {
 // Plugin
 // ---------------------------------------------------------------------------
 
-const API_VERSION = "1.7.2";
+const API_VERSION = "1.7.5";
 const TEMPLATE = "```" + BLOCK + "\nname New encounter\nparty\n2x [[Goblin Warrior]]\n```\n";
 const ENCOUNTER_TEMPLATE = "```" + ENCOUNTER_BLOCK + "\n```\n";
 
@@ -5600,5 +5633,5 @@ module.exports._internals = {
   parseEncounterCreature, parseEncounterSpec, isNpcNote, quoteLinks, serializeEncounterSpec, difficultyWord,
   atlasEncounterToSpec, matchSheet, imageBaseName, AtlasLink,
   SYSTEMS, CyberBridge, cpredHit, cpredWoundConditions, cpredDeathSave, statsFromCyberpunk, cpredInitMod,
-  groupAlive, groupAreaHp, groupChunks, specAddText, folderPath, renderPlayerView, PlayerScreenChild, CombatWizardModal, DamageTargetModal, damageTargets, diceRollContext, conSaveFrom, concentrationCond,
+  groupAlive, groupAreaHp, groupChunks, specAddText, folderPath, renderPlayerView, PlayerScreenChild, CombatWizardModal, DamageTargetModal, damageTargets, diceRollContext, conSaveFrom, concentrationCond, hpBand,
 };

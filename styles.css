@@ -354,6 +354,7 @@
 }
 .ri-bar-fill.ri-ok { background: var(--ri-ok); }
 .ri-bar-fill.ri-hurt { background: var(--ri-hurt); }
+.ri-bar-fill.ri-bloodied { background: var(--ri-bloodied, var(--color-orange, #e9973f)); }
 .ri-bar-fill.ri-bad { background: var(--ri-bad); }
 .ri-bar-temp {
 	position: absolute;

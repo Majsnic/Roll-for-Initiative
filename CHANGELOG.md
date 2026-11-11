@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.5
+- **Health bar:** a fourth colour, **orange**, when a creature is **bloodied** (half its max HP or less). The full scale is now: green at full HP, yellow when damaged, orange at half or less, red at a quarter or less (critical). Tracker and player screen.
+
+## 1.7.4
+- **Health bar colours:** **green** at full HP, **yellow** as soon as a creature is damaged, **red** at a quarter of max HP or less (critical). This applies in the tracker and on the player screen.
+
+## 1.7.3
+- **Fix (Atlas VTT):** One DnD Character Sheet 1.8 links each character's Atlas token to a statblock file it writes for Atlas (`<data folder>/<id>/Atlas.md`). Starting a fight from Atlas turned every character into a creature called "Atlas". Those tokens now become the right player characters again, and the live map sync matches them to their tokens.
+
 ## 1.7.2
 Checked against One DnD Character Sheet 1.8.0:
 - **Fix:** sheet 1.8 spell rows are laid out differently, and "Who takes the damage?" showed the casting time ("1A") instead of the spell's name. It now shows the spell or weapon name again.
