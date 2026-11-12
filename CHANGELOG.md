@@ -1,7 +1,7 @@
 # Changelog
 
 ## 1.8.0
-- **Several initiatives at once.** When you roll a new encounter while one is running, choose **Run alongside**. Each fight gets its own note (`Roll Initiative 2.md`, …).
+- **Several initiatives at once.** While an initiative is running, encounter cards show a **Run alongside** button next to **Roll Initiative**. Roll Initiative itself also asks: Run alongside or Overwrite. Each fight gets its own note (`Roll Initiative 2.md`, …).
   - **Switching:** **‹ ›** arrows at the top of the sidebar switch between the initiatives. A dot shows which one has the turn.
   - **One shared turn order:** turns go by initiative across all of them. A player on 20 in one fight is followed by a monster on 19 in the other, and the sidebar follows the turn there by itself. Rounds are shared.
   - **Waiting initiatives** say so, and their marker shows who acts next there.
@@ -9,6 +9,7 @@
   - **Player screen** shows the initiative whose turn it is.
   - **Who takes the damage?** offers targets from the roller's own fight.
   - **API:** state gains `waiting` and `initiatives`.
+- **Stop and go back to setup** (↺ next to ■, the ⋮ menu, or a command): puts the initiative back to before rolling (no round, turn or initiative values; HP and conditions stay). Roll initiative starts it again. A stopped initiative that ran alongside others passes the turn on and rejoins when rolled.
 - **A player can turn against the party.** A character's token menu now has an **Enemy (red)** item to tick or untick.
   - A turned character gets a red rim and an **ENEMY** tag, and stays synced with their sheet.
   - They're counted as an enemy (damage targets, auto-end at 0 HP).

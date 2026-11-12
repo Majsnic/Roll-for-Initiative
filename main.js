@@ -1526,9 +1526,10 @@ class Session {
     this.dirty = false;
     this.plugin.announce(this);
     this.emit();
-    if (this.enc.ended && this.saved) {
+    if ((this.enc.ended || this._leaving) && this.saved) {
       const at = this._endedInit;
       this._endedInit = undefined;
+      this._leaving = false;
       await this.plugin.onFightEnded(this, at);
     }
     return this.saved;
@@ -1597,6 +1598,17 @@ class Session {
       const s = this.stat(res.to);
       if (res.to.player && s.hp <= 0 && !s.dead) new Notice(`${res.to.name} is at 0 HP - roll a death saving throw`);
     }
+  }
+
+  /** Stop the initiative and go back to the setup before anyone rolled:
+   *  no round, no turn, no initiative values. HP and conditions stay. */
+  async resetToSetup() {
+    this.noteEndedAt();
+    for (const c of this.enc.combatants) { c.current = false; c.init = undefined; }
+    this.enc.round = 0;
+    this.enc.ended = false;
+    this._leaving = true;
+    await this.commit();
   }
 
   async endCombat() {
@@ -2171,6 +2183,7 @@ class EncounterUI {
       this.button(tools, "chevron-right", "Next", "ri-next", () => session.step(1), "Next turn");
       this.button(tools, "square", "", "ri-end", () => session.endCombat(), "End combat");
     }
+    if (session.isRunning() || enc.ended) this.button(tools, "rotate-ccw", "", "ri-reset", () => session.resetToSetup(), "Stop and go back to setup (before rolling)");
     if (!this.opts.sidebar) this.button(tools, "panel-right", "", "ri-side", () => this.plugin.openInSidebar(session), "Run in sidebar");
     if (this.plugin.screenPlugin) this.button(tools, "monitor-up", "", "ri-screen", () => this.plugin.showOnPlayerScreen(session), "Show on player screen (no HP or AC)");
     this.button(tools, "more-vertical", "", "ri-menu", (e) => this.encounterMenu(e), "Encounter options");
@@ -2582,6 +2595,7 @@ class EncounterUI {
       new TextPromptModal(this.app, "Encounter name", s.enc.name, (v) => { s.enc.name = v || ""; s.commit(); }).open();
     }));
     menu.addItem((i) => i.setTitle("Ask players for initiative").setIcon("dices").onClick(() => new PlayerInitModal(this.plugin, s, (v) => s.rollInitiative(v)).open()));
+    if (s.enc.round > 0) menu.addItem((i) => i.setTitle("Stop and go back to setup").setIcon("rotate-ccw").onClick(() => s.resetToSetup()));
     menu.addItem((i) => i.setTitle("Remove defeated monsters").setIcon("skull").onClick(() => s.clearDefeated()));
     menu.addItem((i) => i.setTitle("Sort by initiative").setIcon("arrow-down-wide-narrow").onClick(() => { sortKeepCurrent(s.enc, (c) => s.stat(c)); s.commit(); }));
     menu.addItem((i) => i.setTitle("Show on player screen").setIcon("monitor-up").onClick(() => this.plugin.showOnPlayerScreen(s)));
@@ -3467,7 +3481,8 @@ class EncounterCard extends MarkdownRenderChild {
     }
 
     // ---- start ----
-    const btn = el.createEl("button", { cls: "ri-btn ri-roll ri-enc-roll" });
+    const start = el.createDiv({ cls: "ri-enc-start" });
+    const btn = start.createEl("button", { cls: "ri-btn ri-roll ri-enc-roll" });
     setIcon(btn.createSpan({ cls: "ri-btn-icon" }), "dices");
     btn.createSpan({ text: "Roll Initiative" });
     if (!plan.creatures.length && !plan.players.length) btn.disabled = true;
@@ -3475,6 +3490,27 @@ class EncounterCard extends MarkdownRenderChild {
       e.preventDefault();
       this.plugin.startEncounter(spec, this.ctx.sourcePath);
     };
+    // another initiative is running: start this one next to it
+    const along = start.createEl("button", { cls: "ri-btn ri-enc-along" });
+    setIcon(along.createSpan({ cls: "ri-btn-icon" }), "copy-plus");
+    along.createSpan({ text: "Run alongside" });
+    along.setAttr("aria-label", "Start this initiative next to the one that's running. They share one turn order.");
+    along.disabled = btn.disabled;
+    along.onclick = (e) => {
+      e.preventDefault();
+      this.plugin.startEncounter(spec, this.ctx.sourcePath, "alongside");
+    };
+    const showAlong = () => this.plugin.anyRunning().then((v) => along.toggleClass("ri-hidden", !v)).catch(() => {});
+    along.addClass("ri-hidden");
+    showAlong();
+    if (!this._alongWatch) {
+      this._alongWatch = [];
+      let t = null;
+      const later = () => { if (t) clearTimeout(t); t = setTimeout(() => { t = null; for (const f of this._alongWatch) f(); }, 300); };
+      this.registerEvent(this.app.workspace.on("roll-initiative:change", later));
+      this.registerEvent(this.app.workspace.on("roll-initiative:active-changed", later));
+    }
+    this._alongWatch.push(showAlong);
   }
 }
 
@@ -4874,6 +4910,7 @@ class RollInitiativePlugin extends Plugin {
     this.addCommand({ id: "next-turn", name: "Next turn", callback: () => this.withActive((s) => s.step(1)) });
     this.addCommand({ id: "previous-turn", name: "Previous turn", callback: () => this.withActive((s) => s.step(-1)) });
     this.addCommand({ id: "end-combat", name: "End combat", callback: () => this.withActive((s) => s.endCombat()) });
+    this.addCommand({ id: "reset-combat", name: "Stop and go back to setup (before rolling)", callback: () => this.withActive((s) => s.resetToSetup()) });
 
     // Cache invalidation when notes change.
     this.registerEvent(this.app.metadataCache.on("changed", (file) => { this.resolver.cache.delete(file.path); this._index = null; }));
@@ -5640,7 +5677,20 @@ class RollInitiativePlugin extends Plugin {
   /** Roll Initiative from an encounter card: writes the single Roll
    *  Initiative note, asks before replacing a running combat, rolls, and
    *  opens the sidebar (+ the note, if enabled). */
-  async startEncounter(spec, sourcePath) {
+  /** Is any initiative running (the sidebar's, or ones running together)? */
+  async anyRunning() {
+    const refs = [...this.linkState().fights];
+    const a = this.settings.active;
+    if (a && !refs.some((r) => this.sameRef(r, a))) refs.push(a);
+    for (const ref of refs) {
+      const s = await this.findSession({ sourcePath: ref.path, id: ref.id });
+      if (s && s.isRunning() && s.enc.combatants.length) return true;
+    }
+    return false;
+  }
+
+  /** mode "alongside": skip the question and run next to what's running. */
+  async startEncounter(spec, sourcePath, mode) {
     const vault = this.app.vault;
     const L = this.linkState();
     let running = (await this.loadLinked()).filter((s) => s.isRunning());
@@ -5658,7 +5708,7 @@ class RollInitiativePlugin extends Plugin {
     let join = false;
     if (running.length) {
       const cur = running.find((s) => this.sameRef(this.refOf(s), this.settings.active)) || running.find((s) => this.sameRef(this.refOf(s), L.turn)) || running[0];
-      const choice = await this.confirmOverwrite({ name: cur.enc.name, round: cur.enc.round, count: running.length, names: running.map((s) => s.enc.name || this.fightName(this.refOf(s))) });
+      const choice = mode === "alongside" ? "alongside" : await this.confirmOverwrite({ name: cur.enc.name, round: cur.enc.round, count: running.length, names: running.map((s) => s.enc.name || this.fightName(this.refOf(s))) });
       if (choice === "show") { await this.setActive(this.refOf(cur)); await this.revealView(true); return; }
       if (choice === "alongside") {
         join = true;
@@ -5807,10 +5857,15 @@ class RollInitiativePlugin extends Plugin {
     if (!this.isLinked(session)) return null;
     const L = this.linkState();
     const others = (await this.loadLinked(session)).filter((s) => s !== session && s.isRunning());
-    if (!others.length) return null;
     const turnS = others.find((s) => this.sameRef(this.refOf(s), L.turn));
-    const round = Math.max(1, (turnS || others[0]).enc.round);
-    if (!turnS) return { round, marker: null }; // this fight holds the turn itself
+    if (!turnS) {
+      // nobody else holds the turn: this fight starts with it
+      L.turn = this.refOf(session);
+      await this.saveSettings();
+      if (!others.length) return null;
+      return { round: Math.max(1, others[0].enc.round), marker: null };
+    }
+    const round = Math.max(1, turnS.enc.round);
     const order = this.turnOrder([...others, session], turnS);
     const i = order.findIndex((e) => e.s === turnS && e.c.current);
     const after = order.slice(i + 1).find((e) => e.s === session);
@@ -5823,9 +5878,12 @@ class RollInitiativePlugin extends Plugin {
     const ref = this.refOf(session);
     if (!L.fights.some((r) => this.sameRef(r, ref))) return;
     const wasTurn = this.sameRef(L.turn, ref);
-    L.fights = L.fights.filter((r) => !this.sameRef(r, ref));
-    const rest = (await this.loadLinked()).filter((s) => s.isRunning());
-    L.fights = L.fights.filter((r) => rest.some((s) => this.sameRef(this.refOf(s), r)));
+    // stopped back to setup (not ended): it stays in the list and rejoins
+    // the shared order when it's rolled again
+    const keep = !session.enc.ended;
+    if (!keep) L.fights = L.fights.filter((r) => !this.sameRef(r, ref));
+    const rest = (await this.loadLinked(session)).filter((s) => s !== session && s.isRunning());
+    L.fights = L.fights.filter((r) => (keep && this.sameRef(r, ref)) || rest.some((s) => this.sameRef(this.refOf(s), r)));
     if (!rest.length) {
       L.turn = null;
       await this.saveSettings();
@@ -5845,8 +5903,9 @@ class RollInitiativePlugin extends Plugin {
     L.turn = this.refOf(target);
     await this.saveSettings();
     if (bump) for (const s of rest) { s.enc.round++; await s.commit(); }
-    new Notice(`${session.enc.name || "Initiative"} ended. The turn goes on in ${target.enc.name || this.fightName(L.turn)}.`);
-    if (this.sameRef(this.settings.active, ref) || wasTurn) await this.setActive(L.turn);
+    if (wasTurn) new Notice(`${session.enc.name || "Initiative"} ${keep ? "stopped" : "ended"}. The turn goes on in ${target.enc.name || this.fightName(L.turn)}.`);
+    // ended: show the fight that has the turn; stopped: stay, ready to roll again
+    if (!keep && (this.sameRef(this.settings.active, ref) || wasTurn)) await this.setActive(L.turn);
   }
   /** First note name no running initiative uses: "Roll Initiative 2.md"… */
   freeCombatPath(running) {

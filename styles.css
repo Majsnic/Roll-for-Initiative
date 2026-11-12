@@ -1940,3 +1940,28 @@ button.ri-cond:hover {
 .ri-wait-note .ri-other-icon svg {
 	color: var(--interactive-accent);
 }
+
+/* encounter card: Roll Initiative + Run alongside */
+.ri-enc-start {
+	display: flex;
+	gap: 8px;
+}
+.ri-enc-start .ri-enc-roll {
+	flex: 1 1 auto;
+	width: auto;
+}
+.ri .ri-enc-along {
+	flex: 0 0 auto;
+	justify-content: center;
+	padding: 8px 12px;
+	font-size: 1em;
+	border: 1px solid var(--ri-accent);
+	color: var(--ri-accent);
+	background: transparent;
+}
+.ri .ri-enc-along:hover {
+	background: color-mix(in srgb, var(--ri-accent) 12%, transparent);
+}
+.ri .ri-enc-along.ri-hidden {
+	display: none;
+}

@@ -134,6 +134,7 @@ Every change is written back into the block as YAML. Pressing **Roll Initiative*
 
 ## Ending combat
 
+- ↺ (**Stop and go back to setup**, also in the ⋮ menu and as a command) stops the initiative and puts it back to how it was before rolling: no round, no turn, no initiative values. HP and conditions stay. **Roll initiative** starts it again.
 - ■ marks the initiative as **Ended**. The round pill shows "Ended", and `ended` is stored in the block.
 - With **End combat when all enemies are down** on (the default), the combat ends by itself as soon as every red creature is at 0 HP.
 - **Roll initiative** starts the fight again.

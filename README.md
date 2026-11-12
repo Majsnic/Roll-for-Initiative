@@ -94,7 +94,7 @@ Large battles stay manageable: a **group** is one row for many identical creatur
 
 For when the party splits up, like a city attack where each group fights its own enemies somewhere else.
 
-- **Start another one:** press **Roll Initiative** on a second encounter while one is running, and choose **Run alongside**.
+- **Start another one:** while an initiative is running, encounter cards show a **Run alongside** button next to **Roll Initiative**. (Roll Initiative itself asks too: *Run alongside* or *Overwrite*.)
   - The new fight goes into its own note: `Roll Initiative 2.md`, `Roll Initiative 3.md`, and so on.
   - **Overwrite** still replaces the fight shown in the sidebar.
 - **Switch between them:** the top of the sidebar shows **‹ fight name ›** arrows and one dot per initiative.
@@ -107,6 +107,7 @@ For when the party splits up, like a city attack where each group fights its own
   - Condition durations still tick at the end of each creature's own turn.
 - **A waiting initiative** says so at the top (*Waiting: the turn is in …*). Its dashed `>` marker shows who acts next there.
 - **Joining mid-round:** a new initiative joins the current round. Its creatures act this round if their initiative is still to come, and the rest wait for the next round.
+- **Stop and go back to setup** (↺ next to ■, or ⋮ menu): the initiative goes back to how it was before rolling. Round, turn and initiative values are cleared; HP and conditions stay. Press **Roll initiative** to start it again; a stopped initiative that ran alongside others rejoins their turn order.
 - **Ending:** end one initiative (■, or all its enemies go down) and the others carry on. If it had the turn, the turn passes to whoever is next. When only one is left, it's a normal fight again.
 - **Player screen:** shows the initiative whose turn it is.
 - **Who takes the damage?:** offers the targets from the fight of whoever rolled.
