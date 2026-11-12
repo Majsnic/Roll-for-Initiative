@@ -1,7 +1,7 @@
 # Changelog
 
 ## 1.8.0
-- **Several initiatives at once.** While an initiative is running, encounter cards show a **Run alongside** button next to **Roll Initiative**. Roll Initiative itself also asks: Run alongside or Overwrite. Each fight gets its own note (`Roll Initiative 2.md`, …).
+- **Several initiatives at once.** While an initiative is running, a **Run alongside** button shows next to **Roll initiative**: on encounter cards, and on a fight in its own note before it's rolled (the fight stays in that note). Roll Initiative itself also asks: Run alongside or Overwrite. Each fight gets its own note (`Roll Initiative 2.md`, …).
   - **Switching:** **‹ ›** arrows at the top of the sidebar switch between the initiatives. A dot shows which one has the turn.
   - **One shared turn order:** turns go by initiative across all of them. A player on 20 in one fight is followed by a monster on 19 in the other, and the sidebar follows the turn there by itself. Rounds are shared.
   - **Waiting initiatives** say so, and their marker shows who acts next there.

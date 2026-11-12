@@ -2178,6 +2178,9 @@ class EncounterUI {
 
     const tools = head.createDiv({ cls: "ri-tools" });
     this.button(tools, "dices", session.isRunning() ? "Reroll" : "Roll initiative", "ri-roll", () => this.plugin.startRoll(session));
+    if (!session.isRunning() && this.plugin.othersMayRun(session)) {
+      this.button(tools, "copy-plus", "Run alongside", "ri-along", () => this.plugin.runAlongside(session), "Roll this fight and run it next to the initiative that's running. They share one turn order.");
+    }
     if (session.isRunning()) {
       this.button(tools, "chevron-left", "", "ri-prev", () => session.step(-1), "Previous turn");
       this.button(tools, "chevron-right", "Next", "ri-next", () => session.step(1), "Next turn");
@@ -2201,7 +2204,7 @@ class EncounterUI {
     if (!this.opts.sidebar && active && !this.plugin.isLinked(session) && !(active.path === session.sourcePath && active.id === enc.id)) {
       const other = root.createDiv({ cls: "ri-other" });
       setIcon(other.createSpan({ cls: "ri-other-icon" }), "info");
-      other.createSpan({ text: `This is a separate fight - the sidebar is running ${active.path.split("/").pop().replace(/\.md$/, "")}. Changes here won't show there.` });
+      other.createSpan({ text: `This is a separate fight - the sidebar is running ${active.path.split("/").pop().replace(/\.md$/, "")}. Changes here won't show there.${session.isRunning() ? "" : " Run alongside rolls this one and runs both with one turn order."}` });
       this.button(other, "panel-right", "Run this one in sidebar", "ri-other-btn", () => this.plugin.openInSidebar(session));
     }
 
@@ -5687,6 +5690,45 @@ class RollInitiativePlugin extends Plugin {
       if (s && s.isRunning() && s.enc.combatants.length) return true;
     }
     return false;
+  }
+
+  /** Could another initiative be running? (cheap check for drawing a button) */
+  othersMayRun(session) {
+    const me = this.refOf(session);
+    const a = this.settings.active;
+    return this.linkState().fights.some((r) => !this.sameRef(r, me)) || (!!a && !this.sameRef(a, me));
+  }
+  /** Roll a fight from its own note and join it to the running initiative(s). */
+  async runAlongside(session) {
+    const L = this.linkState();
+    const me = () => this.refOf(session);
+    const running = (await this.loadLinked(session)).filter((s) => s !== session && s.isRunning() && !this.sameRef(this.refOf(s), me()));
+    const a = this.settings.active;
+    if (a && !this.sameRef(a, me()) && !running.some((s) => this.sameRef(this.refOf(s), a))) {
+      const s = await this.findSession({ sourcePath: a.path, id: a.id });
+      if (s && s !== session && s.isRunning()) running.push(s);
+    }
+    if (!running.length) {
+      new Notice("No other initiative is running - starting this one on its own.");
+      return this.startRoll(session);
+    }
+    if (!session.enc.id || session.dirty) await session.commit();
+    if (!session.saved) {
+      new Notice("Open the note itself so the combat block can be saved first.");
+      return;
+    }
+    const holder = running.find((s) => this.sameRef(this.refOf(s), L.turn)) || running.find((s) => this.sameRef(this.refOf(s), a)) || running[0];
+    L.fights = [...running.map((s) => this.refOf(s)), me()];
+    L.turn = this.refOf(holder);
+    await this.saveSettings();
+    const go = async (values) => {
+      await session.rollInitiative(values);
+      await this.setActive(me());
+      await this.revealView(true);
+    };
+    const pcs = session.enc.combatants.filter((c) => c.player);
+    if (pcs.length && this.settings.askPlayerInitiative && !this.settings.autoRollPlayers) new PlayerInitModal(this, session, go).open();
+    else await go(null);
   }
 
   /** mode "alongside": skip the question and run next to what's running. */

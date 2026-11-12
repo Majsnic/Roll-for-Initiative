@@ -94,7 +94,7 @@ Large battles stay manageable: a **group** is one row for many identical creatur
 
 For when the party splits up, like a city attack where each group fights its own enemies somewhere else.
 
-- **Start another one:** while an initiative is running, encounter cards show a **Run alongside** button next to **Roll Initiative**. (Roll Initiative itself asks too: *Run alongside* or *Overwrite*.)
+- **Start another one:** while an initiative is running, a **Run alongside** button shows next to **Roll initiative**, both on encounter cards and on a fight in its own note that isn't rolled yet. (Roll Initiative on an encounter card also asks: *Run alongside* or *Overwrite*.)
   - The new fight goes into its own note: `Roll Initiative 2.md`, `Roll Initiative 3.md`, and so on.
   - **Overwrite** still replaces the fight shown in the sidebar.
 - **Switch between them:** the top of the sidebar shows **‹ fight name ›** arrows and one dot per initiative.

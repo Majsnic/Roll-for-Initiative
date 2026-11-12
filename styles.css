@@ -1965,3 +1965,11 @@ button.ri-cond:hover {
 .ri .ri-enc-along.ri-hidden {
 	display: none;
 }
+.ri .ri-tools .ri-along {
+	border: 1px solid var(--ri-accent);
+	color: var(--ri-accent);
+	background: transparent;
+}
+.ri .ri-tools .ri-along:hover {
+	background: color-mix(in srgb, var(--ri-accent) 12%, transparent);
+}
