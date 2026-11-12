@@ -9,6 +9,10 @@
   - **Player screen** shows the initiative whose turn it is.
   - **Who takes the damage?** offers targets from the roller's own fight.
   - **API:** state gains `waiting` and `initiatives`.
+- **A player can turn against the party.** A character's token menu now has *Party (blue)* and *Turned against the party (red)*.
+  - A turned character gets a red rim and an **ENEMY** tag, and stays synced with their sheet.
+  - They're counted as an enemy (damage targets, auto-end at 0 HP).
+  - Stored as `player enemy` in the block.
 
 ## 1.7.5
 - **Health bar:** a fourth colour, **orange**, when a creature is **bloodied** (half its max HP or less). The full scale is now: green at full HP, yellow when damaged, orange at half or less, red at a quarter or less (critical). Tracker and player screen.

@@ -125,6 +125,11 @@ Every change is written back into the block as YAML. Pressing **Roll Initiative*
 | Green | allies |
 
 - Change sides with the token menu (Enemy / Neutral / Ally). The choice is stored in the block as `enemy` / `neutral` / `ally`.
+- **A player who turns against the party:** a character's token menu has *Party (blue)* and *Turned against the party (red)*.
+  - A turned character gets a red rim and an **ENEMY** tag, in the tracker and on the player screen.
+  - Stored as `player enemy` in the block. The character stays live with their sheet.
+  - They count as an enemy: listed with the enemies in *Who takes the damage?*, and the combat only auto-ends once they're down too (0 HP).
+  - *Party (blue)* brings them back.
 - **Charmed** flips a creature's rim to the other side: a charmed monster turns green, a charmed PC turns red, and a small ♥ shows why.
 - Only enemies count toward difficulty and toward auto-end.
 

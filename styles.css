@@ -314,6 +314,10 @@
 	color: var(--ri-pc);
 	background: color-mix(in srgb, var(--ri-pc) 15%, transparent);
 }
+.ri-tag.is-enemy {
+	color: var(--ri-bad);
+	background: color-mix(in srgb, var(--ri-bad) 15%, transparent);
+}
 .ri-tag.is-ally {
 	color: var(--ri-ok);
 	background: color-mix(in srgb, var(--ri-ok) 15%, transparent);

@@ -1451,7 +1451,8 @@ class Session {
   }
   /** "pc" | "enemy" | "neutral" | "ally" - NPC notes default to neutral. */
   disp(c) {
-    if (c.player) return "pc";
+    // a player character can turn against the party
+    if (c.player) return c.disp === "enemy" ? "enemy" : "pc";
     if (c.disp) return c.disp;
     return this.r(c).npc ? "neutral" : "enemy";
   }
@@ -1475,7 +1476,9 @@ class Session {
   }
   enemiesDefeated() {
     const enemies = this.enc.combatants.filter((c) => !c.off && this.disp(c) === "enemy");
-    return enemies.length > 0 && enemies.every((c) => this.isDown(c));
+    // a character who turned is out of the fight at 0 HP
+    const out = (c) => this.isDown(c) || (c.player && (this.stat(c).hp ?? 1) <= 0);
+    return enemies.length > 0 && enemies.every(out);
   }
   /** Ends combat (keeps the round number) when every enemy is down. */
   checkAutoEnd() {
@@ -1967,7 +1970,7 @@ class Session {
   }
 
   async setDisposition(c, disp) {
-    c.disp = disp;
+    c.disp = c.player && (disp === "pc" || disp === "party") ? undefined : disp;
     this.checkAutoEnd();
     await this.commit();
   }
@@ -2315,6 +2318,7 @@ class EncounterUI {
       if (s.live) { tag.addClass("is-live"); tag.title = "Synced with the character sheet"; }
     }
     const disp = this.session.disp(c);
+    if (c.player && disp === "enemy") top.createSpan({ cls: "ri-tag is-enemy", text: "ENEMY" }).title = "Turned against the party";
     if (disp === "ally") top.createSpan({ cls: "ri-tag is-ally", text: "ALLY" });
     else if (disp === "neutral") top.createSpan({ cls: "ri-tag is-neutral", text: "NEUTRAL" });
     if (c.hidden) setIcon(top.createSpan({ cls: "ri-tag is-icon" }), "eye-off");
@@ -2535,10 +2539,13 @@ class EncounterUI {
     if (c.link) menu.addItem((i) => i.setTitle(r.kind === "sheet" ? "Open character sheet" : "Open note").setIcon("file-text").onClick(() => this.app.workspace.openLinkText(c.link, this.session.sourcePath, true)));
     menu.addSeparator();
     menu.addItem((i) => i.setTitle(c.hidden ? "Reveal" : "Hide from players").setIcon(c.hidden ? "eye" : "eye-off").onClick(() => this.session.toggle(c, "hidden")));
-    if (!c.player) {
+    {
       const cur = this.session.disp(c);
       menu.addSeparator();
-      for (const [d, label, icon] of [["enemy", "Enemy (red)", "swords"], ["neutral", "Neutral (yellow)", "circle-help"], ["ally", "Ally (green)", "heart-handshake"]]) {
+      const sides = c.player
+        ? [["pc", "Party (blue)", "shield"], ["enemy", "Turned against the party (red)", "swords"]]
+        : [["enemy", "Enemy (red)", "swords"], ["neutral", "Neutral (yellow)", "circle-help"], ["ally", "Ally (green)", "heart-handshake"]];
+      for (const [d, label, icon] of sides) {
         menu.addItem((i) => i.setTitle(label).setIcon(icon).setChecked(cur === d).onClick(() => this.session.setDisposition(c, d)));
       }
       menu.addSeparator();
@@ -3812,6 +3819,7 @@ function renderPlayerView(el, plugin, session) {
     top.createSpan({ cls: "ri-name", text: c.name });
     if (c.player) top.createSpan({ cls: "ri-tag is-live", text: "PC" });
     const disp = session.disp(c);
+    if (c.player && disp === "enemy") top.createSpan({ cls: "ri-tag is-enemy", text: "ENEMY" });
     if (disp === "ally") top.createSpan({ cls: "ri-tag is-ally", text: "ALLY" });
     else if (disp === "neutral") top.createSpan({ cls: "ri-tag is-neutral", text: "NEUTRAL" });
     if (s.group) {
