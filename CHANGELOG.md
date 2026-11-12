@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.8.0
+- **Several initiatives at once.** When you roll a new encounter while one is running, choose **Run alongside**. Each fight gets its own note (`Roll Initiative 2.md`, …).
+  - **Switching:** **‹ ›** arrows at the top of the sidebar switch between the initiatives. A dot shows which one has the turn.
+  - **One shared turn order:** turns go by initiative across all of them. A player on 20 in one fight is followed by a monster on 19 in the other, and the sidebar follows the turn there by itself. Rounds are shared.
+  - **Waiting initiatives** say so, and their marker shows who acts next there.
+  - **Ending one** passes the turn on. The last one left becomes a normal fight again.
+  - **Player screen** shows the initiative whose turn it is.
+  - **Who takes the damage?** offers targets from the roller's own fight.
+  - **API:** state gains `waiting` and `initiatives`.
+
 ## 1.7.5
 - **Health bar:** a fourth colour, **orange**, when a creature is **bloodied** (half its max HP or less). The full scale is now: green at full HP, yellow when damaged, orange at half or less, red at a quarter or less (critical). Tracker and player screen.
 

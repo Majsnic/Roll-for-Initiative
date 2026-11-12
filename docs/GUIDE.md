@@ -112,7 +112,7 @@ An **empty** ```` ```roll-encounter ```` block works too: it opens as a setup ca
 Every change is written back into the block as YAML. Pressing **Roll Initiative**:
 
 1. writes the fight into **one** note (`Roll Initiative.md` by default; set the path in settings);
-2. if that note still holds a running combat, first asks *"There is an active initiative already… overwrite it?"* (Show current / Cancel / Overwrite). An ended combat is replaced without asking;
+2. if a combat is still running, first asks *"There is an active initiative already… Run the new one alongside it, or overwrite it?"* (Show current / Cancel / Overwrite / Run alongside). **Run alongside** puts the new fight in `Roll Initiative 2.md` and both share one turn order (see *Several initiatives at once* in the README). An ended combat is replaced without asking;
 3. rolls initiative and opens the sidebar, plus the note itself if **Open the Roll Initiative note** is on in settings.
 
 ## Sides and colours

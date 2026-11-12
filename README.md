@@ -90,6 +90,29 @@ Large battles stay manageable: a **group** is one row for many identical creatur
 
 ![Concentration at a glance](docs/screenshots/concentration.png)
 
+### Several initiatives at once
+
+For when the party splits up, like a city attack where each group fights its own enemies somewhere else.
+
+- **Start another one:** press **Roll Initiative** on a second encounter while one is running, and choose **Run alongside**.
+  - The new fight goes into its own note: `Roll Initiative 2.md`, `Roll Initiative 3.md`, and so on.
+  - **Overwrite** still replaces the fight shown in the sidebar.
+- **Switch between them:** the top of the sidebar shows **‹ fight name ›** arrows and one dot per initiative.
+  - The highlighted dot is the initiative whose turn it is.
+  - **Turn: …** jumps straight to that initiative.
+- **One shared turn order:** all the initiatives run together like one big initiative order, and turns are never skipped.
+  - Example: a player with 20 in the first fight and a monster with 19 in the second. When the player presses **Next**, the turn goes to the monster, and the sidebar switches to the second fight by itself.
+  - **Next** and **Previous** work from any of the initiatives.
+  - The round is shared, too.
+  - Condition durations still tick at the end of each creature's own turn.
+- **A waiting initiative** says so at the top (*Waiting: the turn is in …*). Its dashed `>` marker shows who acts next there.
+- **Joining mid-round:** a new initiative joins the current round. Its creatures act this round if their initiative is still to come, and the rest wait for the next round.
+- **Ending:** end one initiative (■, or all its enemies go down) and the others carry on. If it had the turn, the turn passes to whoever is next. When only one is left, it's a normal fight again.
+- **Player screen:** shows the initiative whose turn it is.
+- **Who takes the damage?:** offers the targets from the fight of whoever rolled.
+
+![Several initiatives at once](docs/screenshots/several-initiatives.png)
+
 ### Rolled damage and healing: "Who takes the damage?"
 
 During a fight, when someone rolls **damage** or **healing**, a window asks **Who takes the damage?** (or **Who takes the heal?**). It catches rolls from:
@@ -293,6 +316,8 @@ const st = await ri.getState();
 // {
 //   sourcePath, id, name, round,
 //   running, ended,
+//   waiting,          // true: runs alongside others and the turn is in another one
+//   initiatives: 2,   // how many initiatives run together (1 = just this one)
 //   current: "Goblin 1", next: "Dexar",
 //   combatants: [{ name, link, init, hp, maxHp, temp, ac, player, live, conditions: ["Prone"],
 //                  disp: "enemy" | "ally" | "neutral", hidden, off, current,

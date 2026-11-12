@@ -1467,6 +1467,12 @@ class Session {
   isRunning() {
     return this.enc.round > 0 && !this.enc.ended;
   }
+  /** Remember whose initiative the fight stopped at, so a linked
+   *  initiative knows where the shared turn order goes on. */
+  noteEndedAt() {
+    const cur = this.enc.combatants.find((c) => c.current);
+    this._endedInit = cur ? cur.init : undefined;
+  }
   enemiesDefeated() {
     const enemies = this.enc.combatants.filter((c) => !c.off && this.disp(c) === "enemy");
     return enemies.length > 0 && enemies.every((c) => this.isDown(c));
@@ -1474,6 +1480,7 @@ class Session {
   /** Ends combat (keeps the round number) when every enemy is down. */
   checkAutoEnd() {
     if (!this.plugin.settings.autoEnd || !this.isRunning() || !this.enemiesDefeated()) return false;
+    this.noteEndedAt();
     this.enc.ended = true;
     for (const c of this.enc.combatants) c.current = false;
     new Notice("All enemies are down - combat ended.");
@@ -1516,6 +1523,11 @@ class Session {
     this.dirty = false;
     this.plugin.announce(this);
     this.emit();
+    if (this.enc.ended && this.saved) {
+      const at = this._endedInit;
+      this._endedInit = undefined;
+      await this.plugin.onFightEnded(this, at);
+    }
     return this.saved;
   }
 
@@ -1555,13 +1567,22 @@ class Session {
     sortCombatants(this.enc, (c) => this.stat(c));
     this.enc.round = 1;
     this.enc.ended = false;
-    const first = this.enc.combatants.find((c) => this.canAct(c));
+    let first = this.enc.combatants.find((c) => this.canAct(c));
+    // Running alongside other initiatives: join their round, and wait for
+    // our place in the shared turn order.
+    const join = await this.plugin.joinPosition(this);
+    if (join) {
+      this.enc.round = join.round;
+      if (join.marker) first = join.marker;
+    }
     if (first) first.current = true;
     await this.commit();
   }
 
   async step(dir) {
     if (this.enc.ended) return;
+    // One of several initiatives running together: walk the shared order.
+    if (await this.plugin.linkedStep(dir, this)) return;
     const res = stepTurn(this.enc, dir, (c) => this.canAct(c));
     if (!res) return;
     if (dir === 1 && res.from) {
@@ -1576,6 +1597,7 @@ class Session {
   }
 
   async endCombat() {
+    this.noteEndedAt();
     if (this.enc.round > 0) this.enc.ended = true;
     for (const c of this.enc.combatants) c.current = false;
     await this.commit();
@@ -2153,7 +2175,14 @@ class EncounterUI {
     // A block that isn't the fight running in the sidebar says so - its
     // monsters are separate copies, so changes here won't show there.
     const active = this.plugin.settings.active;
-    if (!this.opts.sidebar && active && !(active.path === session.sourcePath && active.id === enc.id)) {
+    if (this.plugin.isWaiting(session)) {
+      root.addClass("ri-waiting");
+      const up = enc.combatants.find((c) => c.current);
+      const w = root.createDiv({ cls: "ri-other ri-wait-note" });
+      setIcon(w.createSpan({ cls: "ri-other-icon" }), "hourglass");
+      w.createSpan({ text: `Waiting: the turn is in ${this.plugin.fightName(this.plugin.linkState().turn)}.${up ? ` Up next here: ${up.name}.` : ""}` });
+    }
+    if (!this.opts.sidebar && active && !this.plugin.isLinked(session) && !(active.path === session.sourcePath && active.id === enc.id)) {
       const other = root.createDiv({ cls: "ri-other" });
       setIcon(other.createSpan({ cls: "ri-other-icon" }), "info");
       other.createSpan({ text: `This is a separate fight - the sidebar is running ${active.path.split("/").pop().replace(/\.md$/, "")}. Changes here won't show there.` });
@@ -2671,7 +2700,44 @@ class InitiativeView extends ItemView {
       this.writing = true;
       try { return await commit(); } finally { setTimeout(() => (this.writing = false), 300); }
     };
-    this.ui.mount(el);
+    // several initiatives at once: arrows to switch between them
+    const fights = this.plugin.isLinked(session) ? await this.plugin.loadLinked(session) : [];
+    if (this.session !== session) return; // a newer load took over
+    el.empty();
+    if (fights.length > 1) this.drawFightNav(el.createDiv({ cls: "ri-fights" }), session, fights);
+    this.ui.mount(el.createDiv({ cls: "ri-view-body" }));
+  }
+
+  drawFightNav(nav, session, fights) {
+    const p = this.plugin;
+    const turn = p.linkState().turn;
+    const idx = Math.max(0, fights.indexOf(session));
+    const go = (s) => p.setActive(p.refOf(s));
+    const arrow = (icon, d, tip) => {
+      const b = nav.createEl("button", { cls: `ri-fights-arrow clickable-icon`, attr: { "aria-label": tip } });
+      setIcon(b, icon);
+      b.onclick = () => go(fights[(idx + d + fights.length) % fights.length]);
+    };
+    arrow("chevron-left", -1, "Previous initiative");
+    const mid = nav.createDiv({ cls: "ri-fights-mid" });
+    mid.createDiv({ cls: "ri-fights-name", text: session.enc.name || p.fightName(p.refOf(session)) });
+    const sub = mid.createDiv({ cls: "ri-fights-sub" });
+    const dots = sub.createSpan({ cls: "ri-fights-dots" });
+    fights.forEach((s, i) => {
+      const dot = dots.createSpan({ cls: "ri-fights-dot" });
+      if (i === idx) dot.addClass("is-shown");
+      if (p.sameRef(p.refOf(s), turn)) dot.addClass("is-turn");
+      dot.setAttr("aria-label", `${s.enc.name || p.fightName(p.refOf(s))}${p.sameRef(p.refOf(s), turn) ? " - turn" : ""}`);
+      dot.onclick = () => go(s);
+    });
+    const turnS = fights.find((s) => p.sameRef(p.refOf(s), turn));
+    if (turnS === session) sub.createSpan({ cls: "ri-fights-turn is-here", text: "Turn here" });
+    else if (turnS) {
+      const t = sub.createSpan({ cls: "ri-fights-turn", text: `Turn: ${turnS.enc.name || p.fightName(turn)}` });
+      t.setAttr("aria-label", "Go to the initiative whose turn it is");
+      t.onclick = () => go(turnS);
+    }
+    arrow("chevron-right", 1, "Next initiative");
   }
 }
 
@@ -4718,7 +4784,7 @@ class InitiativeSettingTab extends PluginSettingTab {
 // Plugin
 // ---------------------------------------------------------------------------
 
-const API_VERSION = "1.7.5";
+const API_VERSION = "1.8.0";
 const TEMPLATE = "```" + BLOCK + "\nname New encounter\nparty\n2x [[Goblin Warrior]]\n```\n";
 const ENCOUNTER_TEMPLATE = "```" + ENCOUNTER_BLOCK + "\n```\n";
 
@@ -4800,7 +4866,13 @@ class RollInitiativePlugin extends Plugin {
 
     // Cache invalidation when notes change.
     this.registerEvent(this.app.metadataCache.on("changed", (file) => { this.resolver.cache.delete(file.path); this._index = null; }));
-    this.registerEvent(this.app.vault.on("rename", () => { this._index = null; }));
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      this._index = null;
+      const L = this.linkState();
+      let changed = false;
+      for (const r of [...L.fights, L.turn]) if (r && r.path === oldPath) { r.path = file.path; changed = true; }
+      if (changed) this.saveSettings();
+    }));
     this.registerEvent(this.app.vault.on("delete", () => { this._index = null; }));
 
     this.addSettingTab(new InitiativeSettingTab(this.app, this));
@@ -5001,6 +5073,8 @@ class RollInitiativePlugin extends Plugin {
       name: enc.name || "",
       round: enc.round || 0,
       running: session.isRunning(),
+      waiting: this.isWaiting(session),
+      initiatives: this.isLinked(session) ? this.linkState().fights.length : 1,
       ended: !!enc.ended,
       current: cur ? cur.name : null,
       next: nextC ? nextC.name : null,
@@ -5322,7 +5396,7 @@ class RollInitiativePlugin extends Plugin {
     if (!heal && kind !== "damage") return false;
     const amount = Math.max(0, Math.round(Number(r.total)));
     if (!Number.isFinite(amount)) return false;
-    const session = await this.findSession(r.target && r.target.sourcePath ? r.target : null);
+    const session = r.target && r.target.sourcePath ? await this.findSession(r.target) : (await this.fightWith(r.whoPath)) || (await this.findSession(null));
     if (!session || (!force && !session.isRunning())) return false;
     this.damageQueue = this.damageQueue || [];
     this.damageQueue.push({ session, amount, heal, damageType: r.damageType || null, who: r.who || null, whoPath: r.whoPath || null, action: r.action || r.label || null, formula: r.formula || null, crit: !!r.crit });
@@ -5392,10 +5466,17 @@ class RollInitiativePlugin extends Plugin {
 
   /** The fight the player screen shows: the active one (the GM's live copy if open). */
   async playerScreenSession() {
-    const a = this.settings.active;
+    const a = this.playerScreenRef();
     const last = this.lastSession;
     if (last && (!a || (last.sourcePath === a.path && last.enc.id === a.id))) return last;
-    return this.syncSession();
+    return this.syncSession(a);
+  }
+  /** With several initiatives running, players see the one whose turn it is. */
+  playerScreenRef() {
+    const L = this.linkState();
+    const a = this.settings.active;
+    if (L.fights.length > 1 && L.turn && L.fights.some((r) => this.sameRef(r, a))) return L.turn;
+    return a;
   }
 
   get screenPlugin() {
@@ -5550,19 +5631,35 @@ class RollInitiativePlugin extends Plugin {
    *  opens the sidebar (+ the note, if enabled). */
   async startEncounter(spec, sourcePath) {
     const vault = this.app.vault;
-    const path = this.combatNotePath();
-    let file = vault.getAbstractFileByPath(path);
-    if (file instanceof TFile) {
-      const block = findBlock((await vault.read(file)).split("\n"), { first: true });
-      if (block) {
-        const cur = parseBlock(block.body.join("\n"));
-        if (cur.round > 0 && !cur.ended && cur.combatants.length) {
-          const choice = await this.confirmOverwrite(cur);
-          if (choice === "show") { await this.setActive({ path, id: cur.id }); await this.revealView(true); return; }
-          if (choice !== "overwrite") return;
-        }
+    const L = this.linkState();
+    let running = (await this.loadLinked()).filter((s) => s.isRunning());
+    L.fights = L.fights.filter((r) => running.some((s) => this.sameRef(this.refOf(s), r)));
+    if (!running.length) {
+      // a fight from before several initiatives existed, still running
+      const main = new Session(this, this.combatNotePath(), { first: true });
+      if ((await main.loadFromFile()) && main.isRunning() && main.enc.combatants.length) {
+        running = [main];
+        L.fights = [this.refOf(main)];
+        L.turn = this.refOf(main);
       }
     }
+    let path = this.combatNotePath();
+    let join = false;
+    if (running.length) {
+      const cur = running.find((s) => this.sameRef(this.refOf(s), this.settings.active)) || running.find((s) => this.sameRef(this.refOf(s), L.turn)) || running[0];
+      const choice = await this.confirmOverwrite({ name: cur.enc.name, round: cur.enc.round, count: running.length, names: running.map((s) => s.enc.name || this.fightName(this.refOf(s))) });
+      if (choice === "show") { await this.setActive(this.refOf(cur)); await this.revealView(true); return; }
+      if (choice === "alongside") {
+        join = true;
+        path = this.freeCombatPath(running);
+      } else if (choice === "overwrite") {
+        path = cur.sourcePath;
+        await cur.endCombat(); // passes the turn on if others keep running
+        join = running.length > 1;
+      } else return;
+    }
+    if (!join) { L.fights = []; L.turn = null; }
+    let file = vault.getAbstractFileByPath(path);
     const plan = await this.resolveEncounter(spec, sourcePath);
     const id = randomId();
     const header = [spec.name ? `name ${spec.name}` : "name Encounter", `id ${id}`];
@@ -5573,16 +5670,193 @@ class RollInitiativePlugin extends Plugin {
       if (folder && !vault.getAbstractFileByPath(folder)) { try { await vault.createFolder(folder); } catch (e) { /* exists */ } }
       file = await vault.create(path, content);
     }
-    await this.setActive({ path, id });
+    const ref = { path, id };
+    L.fights = [...L.fights.filter((r) => r.path !== path), ref];
+    if (!join || !L.turn) L.turn = ref;
+    await this.setActive(ref);
     if (this.settings.openCombatNote) await this.openNote(file);
     await this.revealView(true);
     const session = new Session(this, path, { id });
     if (await session.loadFromFile()) await this.startRoll(session);
   }
 
-  /** The running fight (sidebar's session if open, else loaded from file). */
-  async syncSession() {
+  // ---- several initiatives at once, one shared turn order ----
+  // settings.linked = { fights: [{ path, id }], turn: { path, id } }. The fight
+  // in `turn` is where play is; every other fight's `>` marker shows who acts
+  // next there. Next walks all their creatures as one initiative order.
+
+  sameRef(a, b) { return !!a && !!b && a.path === b.path && (a.id || "") === (b.id || ""); }
+  refOf(s) { return { path: s.sourcePath, id: s.enc.id || "" }; }
+  linkState() {
+    const L = this.settings.linked;
+    if (!L || !Array.isArray(L.fights)) this.settings.linked = { fights: [], turn: null };
+    return this.settings.linked;
+  }
+  /** Is this fight one of several running together? */
+  isLinked(session) {
+    const L = this.linkState();
+    return L.fights.length > 1 && L.fights.some((r) => this.sameRef(r, this.refOf(session)));
+  }
+  /** Linked and running, but the turn is in another initiative. */
+  isWaiting(session) {
+    return this.isLinked(session) && session.isRunning() && !this.sameRef(this.linkState().turn, this.refOf(session));
+  }
+  fightName(ref) {
+    if (!ref) return "";
+    const n = this._fightNames && this._fightNames.get(`${ref.path}|${ref.id || ""}`);
+    return n || ref.path.split("/").pop().replace(/\.md$/, "");
+  }
+  /** The linked fights as sessions, in list order. `prefer` sessions (the one
+   *  that was clicked) are used instead of fresh copies from the files. */
+  async loadLinked(...prefer) {
+    const views = this.app.workspace.getLeavesOfType(VIEW_TYPE).map((l) => l.view).filter((v) => v instanceof InitiativeView && v.session).map((v) => v.session);
+    const pool = [...prefer.filter(Boolean), ...views];
+    if (!this._fightNames) this._fightNames = new Map();
+    const out = [];
+    for (const ref of this.linkState().fights) {
+      let s = pool.find((x) => this.sameRef(this.refOf(x), ref));
+      if (!s) {
+        s = new Session(this, ref.path, { id: ref.id });
+        if (!(await s.loadFromFile())) continue;
+      }
+      this._fightNames.set(`${ref.path}|${ref.id || ""}`, s.enc.name || "");
+      out.push(s);
+    }
+    return out;
+  }
+  /** Everyone who can act, from all the fights, as one initiative order
+   *  (initiative, then modifier, then DEX, then fight order). */
+  turnOrder(sessions, turnS) {
+    const out = [];
+    sessions.forEach((s, fi) => {
+      if (!s.isRunning()) return;
+      s.enc.combatants.forEach((c, ci) => {
+        if (!s.canAct(c) && !(s === turnS && c.current)) return;
+        const st = s.stat(c);
+        out.push({ s, c, fi, ci, init: c.init ?? -Infinity, mod: st.mod ?? 0, dex: st.dex ?? 10 });
+      });
+    });
+    return out.sort((a, b) => (a.init !== b.init ? (b.init > a.init ? 1 : -1) : 0) || b.mod - a.mod || b.dex - a.dex || a.fi - b.fi || a.ci - b.ci);
+  }
+  /** Who acts next in this fight after `c` (wrapping round). */
+  nextInFight(s, c) {
+    const list = s.enc.combatants;
+    const i = list.indexOf(c);
+    for (let k = 1; k <= list.length; k++) {
+      const x = list[(i + k) % list.length];
+      if (s.canAct(x)) return x;
+    }
+    return null;
+  }
+  /** Next / previous turn across all linked fights. False = not linked. */
+  async linkedStep(dir, from) {
+    if (!this.isLinked(from)) return false;
+    const sessions = (await this.loadLinked(from)).filter((s) => s.isRunning());
+    if (sessions.length < 2 || !sessions.includes(from)) return false;
+    const L = this.linkState();
+    const turnS = sessions.find((s) => this.sameRef(this.refOf(s), L.turn)) || sessions[0];
+    const order = this.turnOrder(sessions, turnS);
+    if (!order.length) return true;
+    let round = Math.max(1, turnS.enc.round);
+    const i = order.findIndex((e) => e.s === turnS && e.c.current);
+    let j;
+    if (i < 0) j = dir === 1 ? 0 : order.length - 1;
+    else {
+      j = i + dir;
+      if (j >= order.length) { j = 0; round++; }
+      else if (j < 0) { j = order.length - 1; round = Math.max(1, round - 1); }
+    }
+    const cur = i >= 0 ? order[i] : null;
+    const to = order[j];
+    if (dir === 1 && cur) {
+      const expired = tickDurations(cur.c);
+      if (expired.length) new Notice(`${cur.c.name}: ${expired.join(", ")} ended`);
+      // the fight we leave now shows who acts next there
+      if (cur.s !== to.s) {
+        const n = this.nextInFight(cur.s, cur.c);
+        for (const x of cur.s.enc.combatants) x.current = x === n;
+      }
+    }
+    for (const x of to.s.enc.combatants) x.current = x === to.c;
+    for (const s of sessions) s.enc.round = round;
+    L.turn = this.refOf(to.s);
+    await this.saveSettings();
+    for (const s of sessions) if (s !== to.s) await s.commit();
+    await to.s.commit();
+    const st = to.s.stat(to.c);
+    if (to.c.player && st.hp <= 0 && !st.dead) new Notice(`${to.c.name} is at 0 HP - roll a death saving throw`);
+    // the sidebar follows the turn into the other initiative
     const a = this.settings.active;
+    if (a && !this.sameRef(a, L.turn) && L.fights.some((r) => this.sameRef(r, a))) await this.setActive(L.turn);
+    return true;
+  }
+  /** A fight that joins running initiatives takes their round, and its
+   *  marker goes to whoever comes next there in the shared order. */
+  async joinPosition(session) {
+    if (!this.isLinked(session)) return null;
+    const L = this.linkState();
+    const others = (await this.loadLinked(session)).filter((s) => s !== session && s.isRunning());
+    if (!others.length) return null;
+    const turnS = others.find((s) => this.sameRef(this.refOf(s), L.turn));
+    const round = Math.max(1, (turnS || others[0]).enc.round);
+    if (!turnS) return { round, marker: null }; // this fight holds the turn itself
+    const order = this.turnOrder([...others, session], turnS);
+    const i = order.findIndex((e) => e.s === turnS && e.c.current);
+    const after = order.slice(i + 1).find((e) => e.s === session);
+    return { round, marker: after ? after.c : null };
+  }
+  /** A linked fight ended: drop it, and if it had the turn, pass the turn to
+   *  whoever is next in the other fights. */
+  async onFightEnded(session, at) {
+    const L = this.linkState();
+    const ref = this.refOf(session);
+    if (!L.fights.some((r) => this.sameRef(r, ref))) return;
+    const wasTurn = this.sameRef(L.turn, ref);
+    L.fights = L.fights.filter((r) => !this.sameRef(r, ref));
+    const rest = (await this.loadLinked()).filter((s) => s.isRunning());
+    L.fights = L.fights.filter((r) => rest.some((s) => this.sameRef(this.refOf(s), r)));
+    if (!rest.length) {
+      L.turn = null;
+      await this.saveSettings();
+      return;
+    }
+    let target = wasTurn ? null : rest.find((s) => this.sameRef(this.refOf(s), L.turn)) || null;
+    let bump = false;
+    if (!target) {
+      const marks = rest.map((s) => ({ s, c: s.enc.combatants.find((c) => c.current) })).filter((m) => m.c);
+      const init = (m) => m.c.init ?? -Infinity;
+      const byInit = (a, b) => (init(a) === init(b) ? 0 : init(b) > init(a) ? 1 : -1);
+      // still to act this round: at or below where the ended fight stopped
+      let pick = marks.filter((m) => at === undefined || at === null || init(m) <= at).sort(byInit)[0];
+      if (!pick && marks.length) { pick = marks.sort(byInit)[0]; bump = true; }
+      target = pick ? pick.s : rest[0];
+    }
+    L.turn = this.refOf(target);
+    await this.saveSettings();
+    if (bump) for (const s of rest) { s.enc.round++; await s.commit(); }
+    new Notice(`${session.enc.name || "Initiative"} ended. The turn goes on in ${target.enc.name || this.fightName(L.turn)}.`);
+    if (this.sameRef(this.settings.active, ref) || wasTurn) await this.setActive(L.turn);
+  }
+  /** First note name no running initiative uses: "Roll Initiative 2.md"… */
+  freeCombatPath(running) {
+    const base = this.combatNotePath();
+    const used = new Set(running.map((s) => s.sourcePath));
+    if (!used.has(base)) return base;
+    const stem = base.replace(/\.md$/i, "");
+    for (let n = 2; ; n++) if (!used.has(`${stem} ${n}.md`)) return `${stem} ${n}.md`;
+  }
+  /** The fight holding a character / creature note, when several run at once. */
+  async fightWith(path) {
+    if (!path || this.linkState().fights.length < 2) return null;
+    for (const s of await this.loadLinked()) {
+      if (!s.isRunning()) continue;
+      if (s.enc.combatants.some((c) => { const r = s.r(c); return (r.path || (r.file && r.file.path)) === path; })) return s;
+    }
+    return null;
+  }
+
+  /** The running fight (sidebar's session if open, else loaded from file). */
+  async syncSession(a = this.settings.active) {
     if (!a) return null;
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
       const v = leaf.view;
@@ -5598,12 +5872,17 @@ class RollInitiativePlugin extends Plugin {
     return s;
   }
 
-  /** "overwrite" | "show" | null */
+  /** "alongside" | "overwrite" | "show" | null */
   confirmOverwrite(cur) {
-    return new ConfirmModal(this.app, "Active initiative", `There is an active initiative already${cur.name ? ` (${cur.name}, round ${cur.round})` : ` (round ${cur.round})`}. Do you want to overwrite it?`, [
+    const many = (cur.count || 1) > 1;
+    const msg = many
+      ? `${cur.count} initiatives are running already (${(cur.names || []).filter(Boolean).join(", ")}). Run the new one alongside them, or overwrite ${cur.name || "the one in the sidebar"}?`
+      : `There is an active initiative already${cur.name ? ` (${cur.name}, round ${cur.round})` : ` (round ${cur.round})`}. Run the new one alongside it, or overwrite it?`;
+    return new ConfirmModal(this.app, "Active initiative", msg + " Initiatives running alongside share one turn order.", [
       { text: "Show current", value: "show" },
       { text: "Cancel", value: null },
       { text: "Overwrite", value: "overwrite", warning: true },
+      { text: "Run alongside", value: "alongside", cta: true },
     ]).ask();
   }
 

@@ -1848,3 +1848,91 @@ button.ri-cond:hover {
 	width: 14px;
 	height: 14px;
 }
+
+/* several initiatives at once: switcher at the top of the sidebar */
+.ri-fights {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: 8px;
+	padding: 6px 4px;
+	border-radius: var(--ri-radius, 8px);
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-secondary);
+}
+.ri-fights-arrow {
+	flex: 0 0 auto;
+	padding: 4px;
+}
+.ri-fights-mid {
+	flex: 1 1 auto;
+	min-width: 0;
+	text-align: center;
+}
+.ri-fights-name {
+	font-weight: 600;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.ri-fights-sub {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 2px;
+	font-size: 0.8em;
+	color: var(--text-muted);
+}
+.ri-fights-dots {
+	display: inline-flex;
+	gap: 5px;
+}
+.ri-fights-dot {
+	width: 9px;
+	height: 9px;
+	border-radius: 50%;
+	border: 1.5px solid var(--text-faint, #888);
+	cursor: pointer;
+}
+.ri-fights-dot.is-shown {
+	background: var(--text-muted);
+	border-color: var(--text-muted);
+}
+.ri-fights-dot.is-turn {
+	border-color: var(--interactive-accent);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 35%, transparent);
+}
+.ri-fights-dot.is-turn.is-shown {
+	background: var(--interactive-accent);
+}
+.ri-fights-turn {
+	cursor: pointer;
+	color: var(--interactive-accent);
+}
+.ri-fights-turn:hover {
+	text-decoration: underline;
+}
+.ri-fights-turn.is-here {
+	cursor: default;
+	font-weight: 600;
+	text-decoration: none;
+}
+
+/* a fight waiting for its place in the shared turn order: its marker only
+   shows who acts next there */
+.ri-waiting .ri-row.is-current {
+	border-style: dashed;
+	box-shadow: none;
+}
+.ri-waiting .ri-row.is-current::before {
+	opacity: 0.45;
+}
+.ri-wait-note {
+	border-color: var(--interactive-accent);
+	background: color-mix(in srgb, var(--interactive-accent) 8%, transparent);
+}
+.ri-wait-note .ri-other-icon svg {
+	color: var(--interactive-accent);
+}
