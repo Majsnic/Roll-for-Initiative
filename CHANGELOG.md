@@ -9,7 +9,7 @@
   - **Player screen** shows the initiative whose turn it is.
   - **Who takes the damage?** offers targets from the roller's own fight.
   - **API:** state gains `waiting` and `initiatives`.
-- **A player can turn against the party.** A character's token menu now has *Party (blue)* and *Turned against the party (red)*.
+- **A player can turn against the party.** A character's token menu now has an **Enemy (red)** item to tick or untick.
   - A turned character gets a red rim and an **ENEMY** tag, and stays synced with their sheet.
   - They're counted as an enemy (damage targets, auto-end at 0 HP).
   - Stored as `player enemy` in the block.

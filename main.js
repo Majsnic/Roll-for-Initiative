@@ -2318,7 +2318,7 @@ class EncounterUI {
       if (s.live) { tag.addClass("is-live"); tag.title = "Synced with the character sheet"; }
     }
     const disp = this.session.disp(c);
-    if (c.player && disp === "enemy") top.createSpan({ cls: "ri-tag is-enemy", text: "ENEMY" }).title = "Turned against the party";
+    if (c.player && disp === "enemy") top.createSpan({ cls: "ri-tag is-enemy", text: "ENEMY" });
     if (disp === "ally") top.createSpan({ cls: "ri-tag is-ally", text: "ALLY" });
     else if (disp === "neutral") top.createSpan({ cls: "ri-tag is-neutral", text: "NEUTRAL" });
     if (c.hidden) setIcon(top.createSpan({ cls: "ri-tag is-icon" }), "eye-off");
@@ -2542,11 +2542,14 @@ class EncounterUI {
     {
       const cur = this.session.disp(c);
       menu.addSeparator();
-      const sides = c.player
-        ? [["pc", "Party (blue)", "shield"], ["enemy", "Turned against the party (red)", "swords"]]
-        : [["enemy", "Enemy (red)", "swords"], ["neutral", "Neutral (yellow)", "circle-help"], ["ally", "Ally (green)", "heart-handshake"]];
-      for (const [d, label, icon] of sides) {
-        menu.addItem((i) => i.setTitle(label).setIcon(icon).setChecked(cur === d).onClick(() => this.session.setDisposition(c, d)));
+      if (c.player) {
+        // a character who turns against the party: Enemy on / off
+        const on = cur === "enemy";
+        menu.addItem((i) => i.setTitle("Enemy (red)").setIcon("swords").setChecked(on).onClick(() => this.session.setDisposition(c, on ? "pc" : "enemy")));
+      } else {
+        for (const [d, label, icon] of [["enemy", "Enemy (red)", "swords"], ["neutral", "Neutral (yellow)", "circle-help"], ["ally", "Ally (green)", "heart-handshake"]]) {
+          menu.addItem((i) => i.setTitle(label).setIcon(icon).setChecked(cur === d).onClick(() => this.session.setDisposition(c, d)));
+        }
       }
       menu.addSeparator();
     }

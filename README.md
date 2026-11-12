@@ -25,7 +25,7 @@ An initiative tracker for [Obsidian](https://obsidian.md) that keeps the whole f
   - The sheet's own rules apply: temp HP absorbs damage first, 0 HP means dying, three successful saves bring the PC back to 1 HP.
 - **Tokens with number badges**: *Goblin 2* keeps its "2" after sorting.
 - **Armies and minions**: run 40 goblins as **one row with a shared HP pool**, hit the whole group or several members at once, and watch the "27/40 standing" count drop.
-- **Rim colours show the side**: blue = player, red = enemy, yellow = neutral NPC, green = ally. *Charmed* flips the colour. A player character can **turn against the party** (token menu → *Turned against the party*): red rim, an ENEMY tag, and they count as an enemy.
+- **Rim colours show the side**: blue = player, red = enemy, yellow = neutral NPC, green = ally. *Charmed* flips the colour. A player character can **turn against the party** (tick **Enemy** in their token menu): red rim, an ENEMY tag, and they count as an enemy.
 - **Encounter cards**: write an encounter in a ` ```roll-encounter ``` ` block (Initiative Tracker syntax) and press **Roll Initiative**.
   - The card has players on the left and creatures on the right, with − / + steppers.
   - A badge shows the difficulty (*Easy / Medium / Hard / Deadly encounter*).
