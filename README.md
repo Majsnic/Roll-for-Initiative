@@ -173,20 +173,16 @@ Settings → Roll for Initiative → **Game system** → *Cyberpunk RED*. In thi
 
 ## Installation
 
-Roll for Initiative is **not in the Community plugins list yet**, so you can't install it from **Browse** in Obsidian. Use one of these two ways.
-
-### Option A: BRAT (recommended; installs and updates inside Obsidian)
+Roll for Initiative is in Obsidian's **Community plugins** list.
 
 1. In Obsidian, open **Settings → Community plugins** and turn off **Restricted mode** if it is on.
-2. Click **Browse**, search for **BRAT** (*Obsidian42 - BRAT*), then **Install** and **Enable** it.
-3. Open **Settings → BRAT → Add Beta plugin**.
-4. Paste this repository's address: `https://github.com/YOUR-GITHUB-USERNAME/roll-initiative`
-5. Click **Add Plugin**. BRAT downloads the latest release.
-6. Go to **Settings → Community plugins** and switch on **Roll for Initiative**.
+2. Click **Browse** and search for **Roll for Initiative**.
+3. Click **Install**, then **Enable**.
 
-BRAT checks for new releases when Obsidian starts. You can also run **BRAT: Check for updates** from the command palette.
+Obsidian keeps it up to date: new versions show up under **Settings → Community plugins → Check for updates**.
 
-### Option B: by hand
+<details>
+<summary>Installing by hand (without the Community plugins list)</summary>
 
 1. Download `main.js`, `manifest.json` and `styles.css` from the [latest release](../../releases/latest).
 2. In your vault, create the folder `.obsidian/plugins/roll-initiative/`. The `.obsidian` folder is hidden: turn on hidden files in your file manager.
@@ -194,13 +190,15 @@ BRAT checks for new releases when Obsidian starts. You can also run **BRAT: Chec
 4. Restart Obsidian, or run **Reload app without saving**, then go to **Settings → Community plugins** and switch on **Roll for Initiative**.
 
 To update, replace the three files with the ones from the new release.
+</details>
 
 ### Recommended companion plugins
 
 | Plugin | Why |
 |---|---|
 | [Fantasy Statblocks](https://github.com/valentine195/obsidian-5e-statblocks) | Monster statblocks: the stat source and the statblock pane |
-| One DnD Character Sheet | Live D&D 2024 player sheets (HP, conditions, death saves) |
+| TTRPG Tools: Player Screen | The players' second screen (turn order without HP numbers or AC) |
+| One DnD Character Sheet | Live D&D 2024 player sheets (HP, conditions, death saves). [Video](https://youtu.be/ExLmbPfUDAM) |
 | Cyberpunk RED Character Sheet | Live Cyberpunk RED player sheets |
 | Atlas VTT | Battle maps; encounters and live token sync |
 
