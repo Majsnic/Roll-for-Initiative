@@ -10,6 +10,12 @@ An initiative tracker for [Obsidian](https://obsidian.md) that keeps the whole f
 
 ![The tracker in the middle of a fight](docs/screenshots/tracker.png)
 
+## Video tutorial
+
+[![Roll for Initiative – video tutorial](https://img.youtube.com/vi/Xn33CKeCMJ4/hqdefault.jpg)](https://youtu.be/Xn33CKeCMJ4)
+
+**[Watch the tutorial on YouTube](https://youtu.be/Xn33CKeCMJ4)**: a whole fight run with the plugin, from building the encounter to two fights at once. For the character sheet it works with, see the [One DnD Character Sheet video](https://youtu.be/ExLmbPfUDAM).
+
 ---
 
 ## Features
