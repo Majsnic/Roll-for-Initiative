@@ -38,7 +38,7 @@ An initiative tracker for [Obsidian](https://obsidian.md) that keeps the whole f
   - An optional **Roll for HP** checkbox rolls each creature's HP.
 - **One combat note**: every fight goes into one *Roll Initiative* note. If a fight is still running, the plugin asks before overwriting it.
 - **Auto-end**: combat ends by itself when every enemy is down.
-- **Statblock pane**: click a monster's name to open its statblock in the sidebar.
+- **Statblock pane**: click a monster's name to open its statblock in the sidebar. With Atlas VTT on, a character's name opens their Atlas card there (the layout Atlas shows on Ctrl-hover).
 - **Add box with suggestions**: type `3 gob` and press Enter to add 3 Goblins.
 - **Atlas VTT**: start fights from Atlas encounters and keep initiative, HP and conditions in sync with an open Atlas map.
 - **Game systems**: switch between D&D 5e (2024) and Cyberpunk RED in Settings.
@@ -200,7 +200,7 @@ To update, replace the three files with the ones from the new release.
 | TTRPG Tools: Player Screen | The players' second screen (turn order without HP numbers or AC) |
 | One DnD Character Sheet | Live D&D 2024 player sheets (HP, conditions, death saves). [Video](https://youtu.be/ExLmbPfUDAM) |
 | Cyberpunk RED Character Sheet | Live Cyberpunk RED player sheets |
-| Atlas VTT | Battle maps; encounters and live token sync |
+| Atlas VTT | Battle maps; encounters, live token sync, and characters' Atlas cards in the statblock pane |
 
 None of them is required. Without them, type HP and AC into the block yourself.
 

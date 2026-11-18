@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.2
+- **Characters in the statblock pane.** With Atlas VTT on, clicking a character's name in the tracker (or *Show statblock* in their token menu) opens their Atlas card in the pane under the tracker: the same layout Atlas shows when you Ctrl-hover their token on a map. It's drawn by Atlas itself, from the `(Atlas)` note One DnD Character Sheet keeps for the character. Ctrl/Cmd-click still opens the character sheet. Without Atlas, or for a character without an Atlas card, the name opens the sheet as before.
+
+## 1.8.1
+- **Link previews in the statblock pane.** Hovering a link inside a statblock (a condition, a spell…) now shows Obsidian's page preview, like in a note.
+
 ## 1.8.0
 - **Several initiatives at once.** While an initiative is running, a **Run alongside** button shows next to **Roll initiative**: on encounter cards, and on a fight in its own note before it's rolled (the fight stays in that note). Roll Initiative itself also asks: Run alongside or Overwrite. Each fight gets its own note (`Roll Initiative 2.md`, …).
   - **Switching:** **‹ ›** arrows at the top of the sidebar switch between the initiatives. A dot shows which one has the turn.

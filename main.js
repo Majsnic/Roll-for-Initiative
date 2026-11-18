@@ -1018,6 +1018,23 @@ class SheetBridge {
     }
     return null;
   }
+  /** The Atlas VTT statblock note the character sheet writes for a character
+   *  (`<data folder>/<data_id>/<Name> (Atlas).md`, frontmatter `statblock: true`
+   *  + `atlas-template`), or null. */
+  atlasNoteOf(file) {
+    if (!(file instanceof TFile)) return null;
+    const fm = (this.app.metadataCache.getFileCache(file) || {}).frontmatter;
+    if (!fm || !fm.data_id) return null;
+    const dir = `${folderPath(this.dataFolder)}/${fm.data_id}/`;
+    let best = null;
+    for (const f of this.app.vault.getMarkdownFiles()) {
+      if (!f.path.startsWith(dir) || f.path.slice(dir.length).includes("/")) continue;
+      const cfm = (this.app.metadataCache.getFileCache(f) || {}).frontmatter;
+      if (!cfm || !cfm.statblock || !cfm["atlas-template"]) continue;
+      if (!best || /\(Atlas\)$/.test(f.basename)) best = f;
+    }
+    return best;
+  }
   companionPath(fm, file, kind) {
     const id = fm.data_id || file.basename;
     return `${this.dataFolder}/${id}/${kind}.md`;
@@ -2317,9 +2334,10 @@ class EncounterUI {
     const main = row.createDiv({ cls: "ri-main" });
     const top = main.createDiv({ cls: "ri-top" });
     const rr = this.session.r(c);
-    if (rr.kind === "creature" || rr.kind === "bestiary") {
+    if (rr.kind === "creature" || rr.kind === "bestiary" || this.plugin.atlasCardOf(this.session, c)) {
       // Monsters: show the statblock in the right sidebar (like Initiative
-      // Tracker). Ctrl/Cmd-click still opens the note itself.
+      // Tracker); characters: their Atlas VTT card. Ctrl/Cmd-click still opens
+      // the note / character sheet itself.
       const a = top.createEl("a", { cls: "ri-name ri-statblock-link", text: c.name });
       a.setAttr("aria-label", `Show statblock of ${c.name}`);
       a.onclick = (e) => {
@@ -2549,7 +2567,7 @@ class EncounterUI {
   rowMenu(e, c) {
     const menu = new Menu();
     const r = this.session.r(c);
-    if (r.kind === "creature" || r.kind === "bestiary") {
+    if (r.kind === "creature" || r.kind === "bestiary" || this.plugin.atlasCardOf(this.session, c)) {
       menu.addItem((i) => i.setTitle("Show statblock").setIcon("scroll-text").onClick(() => this.plugin.showStatblock(this.session, c)));
     }
     if (c.link) menu.addItem((i) => i.setTitle(r.kind === "sheet" ? "Open character sheet" : "Open note").setIcon("file-text").onClick(() => this.app.workspace.openLinkText(c.link, this.session.sourcePath, true)));
@@ -2975,9 +2993,30 @@ class StatblockView extends ItemView {
   getIcon() { return "scroll-text"; }
   async onOpen() {
     this.contentEl.addClass("ri-statblock-view");
-    this.contentEl.createDiv({ cls: "ri-view-empty", text: "Click a monster's name in Roll Initiative to see its statblock here." });
+    this.contentEl.createDiv({ cls: "ri-view-empty", text: "Click a monster's name in Roll Initiative to see its statblock here. With Atlas VTT on, a character's name shows their Atlas card." });
+    // Links inside the rendered statblock (conditions, spells, etc.) got no
+    // page-preview popover here, since only reading view wires that up for
+    // MarkdownRenderer output - so hover is delegated to the
+    // pane itself, just like in a note (GitHub issue: "No rollover in
+    // Creature Sidebar").
+    this.registerDomEvent(this.contentEl, "mouseover", (event) => {
+      const a = event.target && event.target.closest ? event.target.closest("a.internal-link") : null;
+      if (!a || (event.relatedTarget && a.contains(event.relatedTarget))) return;
+      const linktext = a.getAttr("data-href") || a.getAttr("href");
+      if (!linktext) return;
+      this.app.workspace.trigger("hover-link", {
+        event,
+        source: STATBLOCK_VIEW,
+        hoverParent: this,
+        targetEl: a,
+        linktext,
+        sourcePath: this.sourcePath || "",
+      });
+    });
   }
-  async show({ file, bestiaryName, name, sourcePath }) {
+  async show({ file, bestiaryName, name, sourcePath, atlasNote }) {
+    if (atlasNote) return this.showAtlas(atlasNote, name);
+    this.sourcePath = file ? file.path : sourcePath || "";
     this.title = name || (file && file.basename) || bestiaryName || "Statblock";
     if (this.leaf.updateHeader) this.leaf.updateHeader();
     if (this.child) this.removeChild(this.child);
@@ -2995,6 +3034,21 @@ class StatblockView extends ItemView {
     }
     const wrap = el.createDiv({ cls: "ri-statblock-wrap" });
     await MarkdownRenderer.render(this.app, md, wrap, file ? file.path : sourcePath || "", this.child);
+  }
+  /** A character: the same card Atlas VTT shows when you Ctrl-hover the token.
+   *  Drawn by Atlas itself through its ```atlas-statblock``` block, which
+   *  shows the statblock of the note it is rendered for. */
+  async showAtlas(note, name) {
+    this.sourcePath = note.path;
+    this.title = name || note.basename.replace(/\s*\(Atlas\)$/, "");
+    if (this.leaf.updateHeader) this.leaf.updateHeader();
+    if (this.child) this.removeChild(this.child);
+    this.child = new obsidian.Component();
+    this.addChild(this.child);
+    const el = this.contentEl;
+    el.empty();
+    const wrap = el.createDiv({ cls: "ri-statblock-wrap ri-atlas-card" });
+    await MarkdownRenderer.render(this.app, "```atlas-statblock\n```", wrap, note.path, this.child);
   }
 }
 
@@ -4834,7 +4888,7 @@ class InitiativeSettingTab extends PluginSettingTab {
 // Plugin
 // ---------------------------------------------------------------------------
 
-const API_VERSION = "1.8.0";
+const API_VERSION = "1.8.2";
 const TEMPLATE = "```" + BLOCK + "\nname New encounter\nparty\n2x [[Goblin Warrior]]\n```\n";
 const ENCOUNTER_TEMPLATE = "```" + ENCOUNTER_BLOCK + "\n```\n";
 
@@ -4848,6 +4902,8 @@ class RollInitiativePlugin extends Plugin {
     this.registerView(VIEW_TYPE, (leaf) => new InitiativeView(leaf, this));
     this.registerView(STATBLOCK_VIEW, (leaf) => new StatblockView(leaf, this));
     this.registerHoverLinkSource(VIEW_TYPE, { display: "Roll Initiative", defaultMod: true });
+    // Statblock pane behaves like reading view: plain hover shows the popover.
+    this.registerHoverLinkSource(STATBLOCK_VIEW, { display: "Roll Initiative statblock pane", defaultMod: false });
 
     this.registerMarkdownCodeBlockProcessor(BLOCK, (source, el, ctx) => {
       ctx.addChild(new BlockChild(this, el, ctx, source));
@@ -5334,8 +5390,16 @@ class RollInitiativePlugin extends Plugin {
     if (leaf.view instanceof StatblockView) await leaf.view.show(spec);
   }
 
+  /** A sheet character's Atlas VTT card note, when Atlas is on to draw it. */
+  atlasCardOf(session, c) {
+    const r = session.r(c);
+    if (r.kind !== "sheet" || !this.app.plugins || !this.app.plugins.plugins[ATLAS_ID]) return null;
+    return this.bridge.atlasNoteOf(r.file);
+  }
   showStatblock(session, c) {
     const r = session.r(c);
+    const atlasNote = this.atlasCardOf(session, c);
+    if (atlasNote) return this.showStatblockFor({ atlasNote, name: c.name, sourcePath: session.sourcePath });
     return this.showStatblockFor({
       file: r.kind === "creature" ? r.file : null,
       bestiaryName: r.kind === "bestiary" ? c.name.replace(/\s+\d+$/, "") : null,
@@ -6020,7 +6084,7 @@ module.exports._internals = {
   parseCombatantLine, parseBlock, serializeBlock, serializeCombatant, sortCombatants, stepTurn,
   tickDurations, rollDice, extractStatblock, looseYaml, statsFromCreature, xpForCr, normalizeCr,
   difficulty, sheetApplyDamage, sheetApplyHeal, sheetDeathSave, damageMonster, healMonster,
-  findBlock, concentrationDc, Session, SheetBridge, CreatureResolver,
+  findBlock, concentrationDc, Session, SheetBridge, CreatureResolver, StatblockView,
   parseEncounterCreature, parseEncounterSpec, isNpcNote, quoteLinks, serializeEncounterSpec, difficultyWord,
   atlasEncounterToSpec, matchSheet, imageBaseName, AtlasLink,
   SYSTEMS, CyberBridge, cpredHit, cpredWoundConditions, cpredDeathSave, statsFromCyberpunk, cpredInitMod,
