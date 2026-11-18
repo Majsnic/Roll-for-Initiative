@@ -120,6 +120,17 @@ For when the party splits up, like a city attack where each group fights its own
 
 ![Several initiatives at once](docs/screenshots/several-initiatives.png)
 
+### Character cards in the statblock pane
+
+Click a character's name in the tracker, and their character card opens in the pane under it, where monster statblocks open.
+
+- **With Atlas VTT:** it's their Atlas card, the same layout Atlas shows when you Ctrl-hover their token on a map.
+- **Without Atlas** (or on mobile): it's the compact card from One DnD Character Sheet 1.10.0+, with the same look.
+- **Checkboxes** (spell slots, uses, death saves, inspiration) can be ticked right in the card. The change goes to the character sheet.
+- **Ctrl/Cmd-click** opens the full character sheet instead.
+
+<img src="docs/screenshots/character-card.png" alt="A character's card under the tracker" width="345">
+
 ### Rolled damage and healing: "Who takes the damage?"
 
 During a fight, when someone rolls **damage** or **healing**, a window asks **Who takes the damage?** (or **Who takes the heal?**). It catches rolls from:
@@ -428,7 +439,7 @@ The full list, with licences, is in [CREDITS.md](CREDITS.md).
 This is an unofficial fan project.
 - *Dungeons & Dragons* is a trademark of Wizards of the Coast.
 - *Cyberpunk RED* is a trademark of R. Talsorian Games.
-- No game text or art ships with this plugin. The screenshots use made-up characters and generated tokens.
+- No game text or art ships with this plugin. The screenshots use made-up characters and tokens.
 
 ## License
 
