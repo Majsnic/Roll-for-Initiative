@@ -3049,7 +3049,46 @@ class StatblockView extends ItemView {
     el.empty();
     const wrap = el.createDiv({ cls: "ri-statblock-wrap ri-atlas-card" });
     await MarkdownRenderer.render(this.app, "```atlas-statblock\n```", wrap, note.path, this.child);
+    // Atlas only makes the checkboxes clickable on the map; here a click
+    // ticks / clears them the same way, straight in the (Atlas) note (the
+    // character sheet picks the change up from there).
+    this.child.registerDomEvent(wrap, "click", (e) => {
+      const pip = e.target && e.target.closest ? e.target.closest(".atlas-sb-counter__pip") : null;
+      if (!pip) return;
+      e.preventDefault();
+      this.toggleAtlasPip(note, pip).catch((err) => console.error("Roll for Initiative: counter", err));
+    });
   }
+  async toggleAtlasPip(note, pip) {
+    const cell = pip.closest(".atlas-sb-counter");
+    const nameEl = cell && cell.querySelector(".atlas-sb-counter__name");
+    if (!nameEl) return;
+    const pips = Array.from(cell.querySelectorAll(".atlas-sb-counter__pip"));
+    const idx = pips.indexOf(pip);
+    await this.app.fileManager.processFrontMatter(note, (fm) => setAtlasCounter(fm, nameEl.textContent, pips.length, idx));
+  }
+}
+
+/** Tick or clear checkbox `idx` of the counter row named `name` (max `max`)
+ *  in an Atlas statblock note's frontmatter - exactly what Atlas does on the
+ *  map: an unticked box spends from there, a ticked one restores up to it.
+ *  Rows with the same name in other fields (mirrors of the same resource)
+ *  change with it. Returns how many rows changed. */
+function setAtlasCounter(fm, name, max, idx) {
+  const plain = (v) => String(v ?? "").replace(/\[\[([^\]|]*\|)?([^\]]*)\]\]/g, "$2").trim();
+  const want = plain(name);
+  let n = 0;
+  for (const key of Object.keys(fm)) {
+    const rows = fm[key];
+    if (!Array.isArray(rows)) continue;
+    for (const row of rows) {
+      if (!row || typeof row !== "object" || !("used" in row) || Number(row.max) !== max || plain(row.name) !== want) continue;
+      const left = max - (Number(row.used) || 0);
+      row.used = max - (idx < left ? idx : idx + 1);
+      n++;
+    }
+  }
+  return n;
 }
 
 // ---------------------------------------------------------------------------
@@ -4888,7 +4927,7 @@ class InitiativeSettingTab extends PluginSettingTab {
 // Plugin
 // ---------------------------------------------------------------------------
 
-const API_VERSION = "1.8.2";
+const API_VERSION = "1.8.1";
 const TEMPLATE = "```" + BLOCK + "\nname New encounter\nparty\n2x [[Goblin Warrior]]\n```\n";
 const ENCOUNTER_TEMPLATE = "```" + ENCOUNTER_BLOCK + "\n```\n";
 
@@ -6084,7 +6123,7 @@ module.exports._internals = {
   parseCombatantLine, parseBlock, serializeBlock, serializeCombatant, sortCombatants, stepTurn,
   tickDurations, rollDice, extractStatblock, looseYaml, statsFromCreature, xpForCr, normalizeCr,
   difficulty, sheetApplyDamage, sheetApplyHeal, sheetDeathSave, damageMonster, healMonster,
-  findBlock, concentrationDc, Session, SheetBridge, CreatureResolver, StatblockView,
+  findBlock, concentrationDc, Session, SheetBridge, CreatureResolver, StatblockView, setAtlasCounter,
   parseEncounterCreature, parseEncounterSpec, isNpcNote, quoteLinks, serializeEncounterSpec, difficultyWord,
   atlasEncounterToSpec, matchSheet, imageBaseName, AtlasLink,
   SYSTEMS, CyberBridge, cpredHit, cpredWoundConditions, cpredDeathSave, statsFromCyberpunk, cpredInitMod,

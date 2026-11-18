@@ -1973,3 +1973,11 @@ button.ri-cond:hover {
 .ri .ri-tools .ri-along:hover {
 	background: color-mix(in srgb, var(--ri-accent) 12%, transparent);
 }
+
+/* Statblock pane: a character's Atlas VTT card */
+.ri-atlas-card .atlas-statblock-fence__bar {
+	display: none;
+}
+.ri-atlas-card .atlas-sb-counter__pip {
+	cursor: pointer;
+}
