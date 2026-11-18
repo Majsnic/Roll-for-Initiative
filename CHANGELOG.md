@@ -4,7 +4,8 @@
 - **Characters in the statblock pane.** With Atlas VTT on, clicking a character's name in the tracker (or *Show statblock* in their token menu) opens their Atlas card in the pane under the tracker: the same layout Atlas shows when you Ctrl-hover their token on a map. It's drawn by Atlas itself, from the `(Atlas)` note One DnD Character Sheet keeps for the character.
   - The card's checkboxes (spell slots, uses, death saves, inspiration) can be ticked right there, the same way as on the map. The change goes into the `(Atlas)` note, and the character sheet picks it up from there.
   - Atlas's "Edit statblock" bar is hidden in the pane.
-  - Ctrl/Cmd-click still opens the character sheet. Without Atlas, or for a character without an Atlas card, the name opens the sheet as before.
+  - **Without Atlas** (or on mobile), the pane shows the character's compact card from **One DnD Character Sheet 1.10.0+** instead: the same look, drawn by the sheet itself, and its checkboxes write straight to the sheet. With an older sheet, the name opens the character sheet as before.
+  - Ctrl/Cmd-click still opens the character sheet.
 - **Link previews in the statblock pane.** Hovering a link inside a statblock (a condition, a spell…) now shows Obsidian's page preview, like in a note.
 
 ## 1.8.0

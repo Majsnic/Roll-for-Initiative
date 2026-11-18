@@ -143,7 +143,7 @@ Every change is written back into the block as YAML. Pressing **Roll Initiative*
 
 Clicking a monster's name, in the tracker or on an encounter card, opens its statblock in a pane in the right sidebar under the tracker. It's rendered by Fantasy Statblocks, like Initiative Tracker's creature view. Ctrl/Cmd-click opens the note instead.
 
-With **Atlas VTT** on, a character's name opens their **Atlas card** in the same pane: the layout Atlas shows when you Ctrl-hover their token on a map (drawn by Atlas from the `(Atlas)` note One DnD Character Sheet keeps). Ctrl/Cmd-click opens the character sheet. Without Atlas, player names open their character sheet.
+With **Atlas VTT** on, a character's name opens their **Atlas card** in the same pane: the layout Atlas shows when you Ctrl-hover their token on a map (drawn by Atlas from the `(Atlas)` note One DnD Character Sheet keeps). Ctrl/Cmd-click opens the character sheet. Without Atlas, the pane shows the character's compact card from **One DnD Character Sheet 1.10.0+** (same look, drawn by the sheet; its checkboxes write straight to the sheet). With an older sheet, player names open their character sheet.
 
 ## Add box
 
