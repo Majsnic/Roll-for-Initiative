@@ -72,6 +72,7 @@ Large battles stay manageable: a **group** is one row for many identical creatur
 - **Difficulty** counts every member of the group.
 - **Auto-end** triggers when the pool hits 0.
 - **Cyberpunk RED**: one SP value for the whole group, Body / Head / Direct hits come off the pool, and Area hits each target through body SP.
+- **Atlas VTT**: a group of 5 goblins is linked to 5 goblin tokens on the open map. They share the group's initiative in Atlas's tracker, the HP pool is spread over them (goblins fall one by one), and damage on any of those tokens comes off the pool. Atlas's own tracker still shows one row per token.
 
 ![A group of 40 goblins in a fight](docs/screenshots/groups.png)
 

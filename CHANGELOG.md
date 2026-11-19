@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.8.2
+- **Groups on Atlas VTT maps.** A group (army) is now linked to as many tokens of its creature on the open Atlas map as it has members. Before, the live sync left groups out.
+  - The tokens get the group's initiative, so they sit and act together in Atlas's tracker. On the group's turn, its first standing token is the current one.
+  - The HP pool is spread over the tokens: goblins fall one by one (a token at 0 HP shows as defeated), and healing brings them back.
+  - Damage or healing on any of the group's tokens on the map comes off, or goes back into, the pool.
+  - The group's conditions go onto every token.
+  - With fewer tokens than members, the members off the map fall first.
+  - Atlas's own tracker still lists each token on its own row, because Atlas has no groups.
+
 ## 1.8.1
 - **Characters in the statblock pane.** With Atlas VTT on, clicking a character's name in the tracker (or *Show statblock* in their token menu) opens their Atlas card in the pane under the tracker: the same layout Atlas shows when you Ctrl-hover their token on a map. It's drawn by Atlas itself, from the `(Atlas)` note One DnD Character Sheet keeps for the character.
   - The card's checkboxes (spell slots, uses, death saves, inspiration) can be ticked right there, the same way as on the map. The change goes into the `(Atlas)` note, and the character sheet picks it up from there.

@@ -238,7 +238,13 @@ A group is one row for many identical creatures. They share initiative and an **
 
   Either way, the last row carries the pool's damage.
 - **Difficulty** counts every member. Auto-end triggers when the pool is empty.
-- **Atlas VTT:** live sync leaves group rows out, because a group has no single token.
+- **Atlas VTT:** a group is linked to as many tokens of its creature on the open map as it has members (5 goblins = 5 goblin tokens).
+  - All of them get the group's initiative, so they sit together in Atlas's tracker and act together. On the group's turn, its first standing token is the current one.
+  - The HP pool is spread over the tokens. Damage finishes off the most hurt goblin first, so tokens fall one by one; a token at 0 HP shows as defeated. Healing tops up the hurt ones, then brings fallen ones back.
+  - Damage or healing on any of the group's tokens on the map comes off (or goes back into) the pool.
+  - The group's conditions go onto every token.
+  - Fewer tokens than members (40 goblins, 5 tokens): the members off the map fall first, so the tokens are the last ones standing.
+  - Atlas's own tracker still lists each token on its own row, because Atlas has no groups. Run the group from Roll for Initiative.
 - **Cyberpunk RED:**
   - the group shares one SP value, with no per-member ablation;
   - Body / Head / Direct hits come off the pool;

@@ -4361,12 +4361,41 @@ function atlasEncounterToSpec(json, { sheets, fileFor, isSheetFile, linkFor }) {
   return spec;
 }
 
+/** Spread a group's HP over its map tokens, changing as little as possible:
+ *  damage finishes off the most hurt token first, healing tops up the hurt
+ *  ones first, then brings fallen ones back. `cur` = the tokens' HP now. */
+function spreadGroupHp(cur, target, each) {
+  const out = cur.map((h) => Math.max(0, Math.min(each, Number.isFinite(h) ? h : each)));
+  target = Math.max(0, Math.min(each * out.length, Math.round(target)));
+  let diff = target - out.reduce((a, b) => a + b, 0);
+  while (diff < 0) {
+    // the most hurt token still standing (the last one when they're even)
+    let k = -1;
+    out.forEach((h, i) => { if (h > 0 && (k < 0 || h <= out[k])) k = i; });
+    if (k < 0) break;
+    const take = Math.min(out[k], -diff);
+    out[k] -= take;
+    diff += take;
+  }
+  while (diff > 0) {
+    // hurt but standing first, then the fallen, in order
+    let k = out.findIndex((h) => h > 0 && h < each);
+    if (k < 0) k = out.findIndex((h) => h === 0);
+    if (k < 0) break;
+    const give = Math.min(each - out[k], diff);
+    out[k] += give;
+    diff -= give;
+  }
+  return out;
+}
+
 class AtlasLink {
   constructor(plugin) {
     this.plugin = plugin;
     this.app = plugin.app;
     this.views = new Map(); // view -> { unsub, viewId }
     this.maps = new Map(); // `${viewId}|${fightKey}` -> Map(combatantName -> tokenId)
+    this.groupMaps = new Map(); // same key -> Map(groupName -> [tokenId, …])
     this.pushed = new Map(); // tokenId -> { hp, max, conds: Set }
     this.pushing = false;
     this.conditionIds = null; // name(lower) -> id
@@ -4517,7 +4546,7 @@ class AtlasLink {
     const running = session && session.isRunning();
     if (running) {
       const map = this.mapping(view, session);
-      const mapped = new Set(map.values());
+      const mapped = new Set([...map.values(), ...[...map.groups.values()].flat()]);
       const fresh = tokenIds.filter((id) => !mapped.has(id));
       if (!fresh.length) return;
       if (fresh.length === 1) {
@@ -4579,15 +4608,35 @@ class AtlasLink {
     const live = (id) => tokens[id] && tokens[id].offMap !== true;
     const names = new Set(session.enc.combatants.map((c) => c.name));
     for (const [n, id] of [...map]) if (!names.has(n) || !live(id)) map.delete(n);
-    const used = new Set(map.values());
+    if (!this.groupMaps.has(key)) this.groupMaps.set(key, new Map());
+    const gmap = this.groupMaps.get(key);
+    const groupNames = new Set(session.enc.combatants.filter((c) => session.isGroup(c)).map((c) => c.name));
+    for (const [n, list] of [...gmap]) {
+      if (!groupNames.has(n)) { gmap.delete(n); continue; }
+      gmap.set(n, list.filter(live));
+    }
+    map.groups = gmap;
+    const used = new Set([...map.values(), ...[...gmap.values()].flat()]);
     const free = Object.values(tokens).filter((t) => t && t.offMap !== true && t.kind === "character" && !used.has(t.id));
     const take = (t) => { used.add(t.id); free.splice(free.indexOf(t), 1); return t.id; };
     const norm = (s) => String(s || "").trim().toLowerCase();
     const samePath = (a, b) => !!a && !!b && norm(decodeURIComponent(a)) === norm(decodeURIComponent(b));
     const sheets = this.plugin.combatantIndex().filter((x) => x.pc);
+    // A group row takes as many tokens of its creature as it has members.
+    for (const c of session.enc.combatants) {
+      if (!session.isGroup(c)) continue;
+      const r = session.r(c);
+      if (!r.path) continue;
+      const list = gmap.get(c.name) || [];
+      const base = norm(c.name.replace(/\s+\d+$/, ""));
+      const cands = free.filter((t) => samePath(t.statblockPath, r.path))
+        .sort((a, b) => (norm(a.name).startsWith(base) ? 0 : 1) - (norm(b.name).startsWith(base) ? 0 : 1) || String(a.name).localeCompare(String(b.name), undefined, { numeric: true }) || String(a.id).localeCompare(String(b.id)));
+      while (list.length < c.group && cands.length) list.push(take(cands.shift()));
+      gmap.set(c.name, list);
+    }
     for (const c of session.enc.combatants) {
       if (map.has(c.name)) continue;
-      if (c.group) continue; // a group row has no single token on the map
+      if (c.group) continue; // groups are paired above
       const r = session.r(c);
       let tok = null;
       if (r.kind === "creature" && r.path) {
@@ -4637,7 +4686,7 @@ class AtlasLink {
   push(view, session, ids) {
     const store = view.atlasStore;
     const map = this.mapping(view, session);
-    if (!map.size) return;
+    if (!map.size && ![...map.groups.values()].some((l) => l.length)) return;
     this.pushing = true;
     try {
       const S = () => store.getState();
@@ -4675,21 +4724,52 @@ class AtlasLink {
         const after = S().objects.tokens[id];
         this.pushed.set(id, { hp: ((after.resources || {}).hp || {}).current, max: ((after.resources || {}).hp || {}).max, conds: new Set(after.conditions || []) });
       }
+      // groups: the pool spread over the group's tokens, conditions on each
+      for (const c of session.enc.combatants) {
+        const list = map.groups.get(c.name);
+        if (!list || !list.length) continue;
+        const s = session.stat(c);
+        const each = s.each;
+        if (!each || s.hp === undefined) continue;
+        const toks = list.map((id) => S().objects.tokens[id]);
+        if (toks.some((t) => !t)) continue;
+        // fewer tokens than members: the members off the map fall first, so
+        // the tokens are the last ones standing
+        const visible = Math.max(0, Math.min(each * list.length, s.hp));
+        const want = spreadGroupHp(toks.map((t) => (((t.resources || {}).hp || {}).current)), visible, each);
+        const wantConds = new Set();
+        for (const cond of s.conditions || []) { const cid = ids.get(String(cond.name).toLowerCase()); if (cid) wantConds.add(cid); }
+        list.forEach((id, i) => {
+          const tok = S().objects.tokens[id];
+          const res = tok.resources || {};
+          const hp = res.hp || {};
+          if (hp.current !== want[i] || hp.max !== each) S().updateToken(id, { resources: { ...res, hp: { ...hp, current: want[i], max: each } } });
+          const have = new Set(tok.conditions || []);
+          if (typeof S().setTokensCondition === "function") {
+            for (const cid of wantConds) if (!have.has(cid)) S().setTokensCondition([id], cid, true);
+            for (const cid of have) if ([...ids.values()].includes(cid) && !wantConds.has(cid)) S().setTokensCondition([id], cid, false);
+          }
+          const after = S().objects.tokens[id];
+          this.pushed.set(id, { hp: ((after.resources || {}).hp || {}).current, max: each, conds: new Set(after.conditions || []), group: c.name });
+        });
+      }
       // initiative order / turn / round
       const enc = session.enc;
       const ini = S().initiative;
       if (!ini || !Array.isArray(ini.entries)) return;
       if (session.isRunning()) {
-        const ordered = enc.combatants.filter((c) => map.has(c.name) && !c.off);
-        for (const c of ordered) {
-          const id = map.get(c.name);
+        const tokensOf = (c) => (map.has(c.name) ? [map.get(c.name)] : (map.groups.get(c.name) || []));
+        const ordered = enc.combatants.filter((c) => tokensOf(c).length && !c.off);
+        const slots = []; // [combatant, tokenId] in our order
+        for (const c of ordered) for (const id of tokensOf(c)) slots.push([c, id]);
+        for (const [c, id] of slots) {
           const entry = S().initiative.entries.find((e) => e.tokenId === id);
           const s = session.stat(c);
           if (!entry) {
             const tok = S().objects.tokens[id];
             S().addToInitiative({
               tokenId: id,
-              name: c.name,
+              name: map.has(c.name) ? c.name : (tok && tok.name) || c.name,
               initiative: c.init ?? 0,
               awaitingInitiative: c.init === undefined,
               initiativeModifier: s.mod ?? 0,
@@ -4702,13 +4782,19 @@ class AtlasLink {
           }
         }
         // same order as ours
-        ordered.forEach((c, i) => {
+        slots.forEach(([, id], i) => {
           const entries = S().initiative.entries;
-          const from = entries.findIndex((e) => e.tokenId === map.get(c.name));
+          const from = entries.findIndex((e) => e.tokenId === id);
           if (from >= 0 && from !== i && typeof S().reorderInitiative === "function") S().reorderInitiative(from, i);
         });
         const cur = enc.combatants.find((c) => c.current);
-        const curIdx = cur ? S().initiative.entries.findIndex((e) => e.tokenId === map.get(cur.name)) : -1;
+        // a group's turn: its first token still standing (else its first token)
+        let curTok = null;
+        if (cur) {
+          const list = tokensOf(cur);
+          curTok = list.find((id) => ((((S().objects.tokens[id] || {}).resources || {}).hp || {}).current ?? 1) > 0) || list[0] || null;
+        }
+        const curIdx = curTok ? S().initiative.entries.findIndex((e) => e.tokenId === curTok) : -1;
         const i2 = S().initiative;
         if (!i2.isActive || i2.round !== enc.round || i2.currentIndex !== curIdx) {
           try {
@@ -4720,7 +4806,7 @@ class AtlasLink {
             });
           } catch (e) {
             // Fallback without setState: flag the active entry only.
-            for (const e2 of S().initiative.entries) S().updateInitiativeEntry(e2.id, { isActive: e2.tokenId === (cur && map.get(cur.name)) });
+            for (const e2 of S().initiative.entries) S().updateInitiativeEntry(e2.id, { isActive: e2.tokenId === curTok });
           }
         }
       } else if (ini.isActive && typeof S().endCombat === "function") {
@@ -4741,6 +4827,23 @@ class AtlasLink {
     const byId = new Map([...ids].map(([n, id]) => [id, n]));
     const map = this.mapping(view, session);
     const tokens = view.atlasStore.getState().objects.tokens;
+    // a group: HP taken (or healed) on any of its tokens moves the pool by that much
+    for (const c of session.enc.combatants) {
+      const list = map.groups.get(c.name);
+      if (!list || !list.length) continue;
+      let delta = 0;
+      for (const id of list) {
+        const tok = tokens[id];
+        const last = this.pushed.get(id);
+        if (!tok || !last) continue;
+        const now = ((tok.resources || {}).hp || {}).current;
+        if (now === undefined || now === last.hp) continue;
+        delta += now - last.hp;
+        last.hp = now;
+      }
+      const pool = session.stat(c).hp;
+      if (delta && pool !== undefined) await session.setHpFromMap(c, Math.max(0, Math.min(c.maxHp ?? Infinity, pool + delta)));
+    }
     for (const c of session.enc.combatants) {
       const id = map.get(c.name);
       const tok = id && tokens[id];
@@ -4945,7 +5048,7 @@ class InitiativeSettingTab extends PluginSettingTab {
 // Plugin
 // ---------------------------------------------------------------------------
 
-const API_VERSION = "1.8.1";
+const API_VERSION = "1.8.2";
 const TEMPLATE = "```" + BLOCK + "\nname New encounter\nparty\n2x [[Goblin Warrior]]\n```\n";
 const ENCOUNTER_TEMPLATE = "```" + ENCOUNTER_BLOCK + "\n```\n";
 
@@ -6156,7 +6259,7 @@ module.exports._internals = {
   parseCombatantLine, parseBlock, serializeBlock, serializeCombatant, sortCombatants, stepTurn,
   tickDurations, rollDice, extractStatblock, looseYaml, statsFromCreature, xpForCr, normalizeCr,
   difficulty, sheetApplyDamage, sheetApplyHeal, sheetDeathSave, damageMonster, healMonster,
-  findBlock, concentrationDc, Session, SheetBridge, CreatureResolver, StatblockView, setAtlasCounter,
+  findBlock, concentrationDc, Session, SheetBridge, CreatureResolver, StatblockView, setAtlasCounter, spreadGroupHp,
   parseEncounterCreature, parseEncounterSpec, isNpcNote, quoteLinks, serializeEncounterSpec, difficultyWord,
   atlasEncounterToSpec, matchSheet, imageBaseName, AtlasLink,
   SYSTEMS, CyberBridge, cpredHit, cpredWoundConditions, cpredDeathSave, statsFromCyberpunk, cpredInitMod,
