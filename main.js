@@ -4515,6 +4515,7 @@ class AtlasLink {
   detachAll() {
     for (const [, rec] of this.views) { try { rec.unsub(); } catch (e) { /* gone */ } }
     this.views.clear();
+    this.removeSelBars();
   }
 
   attach(view) {
@@ -4525,7 +4526,15 @@ class AtlasLink {
       try { return new Set((view.atlasStore.getState().initiative.entries || []).map((e) => e.tokenId)); } catch (e) { return new Set(); }
     };
     const rec = { viewId: view.viewId || Math.random().toString(36).slice(2), store: view.atlasStore, entries: entryIds(), added: [], addTimer: null };
+    let lastSel = "";
+    const selNow = () => { try { return (view.atlasStore.getState().selectedIds || []).join(","); } catch (e) { return ""; } };
     rec.unsub = view.atlasStore.subscribe(() => {
+      const sel = selNow();
+      if (sel !== lastSel) {
+        lastSel = sel;
+        if (rec.selTimer) clearTimeout(rec.selTimer);
+        rec.selTimer = setTimeout(() => this.drawSelBar(view), 60);
+      }
       const now = entryIds();
       if (this.pushing) { rec.entries = now; return; }
       // Atlas's "Start fight" / "add to initiative" put new tokens into its
@@ -4669,8 +4678,7 @@ class AtlasLink {
     return views.find((v) => ((v.atlasStore.getState().selectedIds) || []).length) || views[0] || null;
   }
   /** Command: the selected tokens become one group for Roll for Initiative. */
-  groupSelected() {
-    const view = this.selectionView();
+  groupSelected(view = this.selectionView()) {
     if (!view) { new Notice("Open an Atlas map first."); return false; }
     const st = view.atlasStore.getState();
     const ids = (st.selectedIds || []).filter((id) => st.objects.tokens[id] && st.objects.tokens[id].kind === "character");
@@ -4683,11 +4691,11 @@ class AtlasLink {
     this.saveMarkedGroups(view, list);
     const name = String(st.objects.tokens[ids[0]].name || "creature");
     new Notice(`${ids.length}× ${name}: one group for Roll for Initiative. The next fight started from Atlas runs them as one row.`);
+    this.drawSelBar(view);
     return true;
   }
   /** Command: the selected tokens leave their group. */
-  ungroupSelected() {
-    const view = this.selectionView();
+  ungroupSelected(view = this.selectionView()) {
     if (!view) { new Notice("Open an Atlas map first."); return false; }
     const ids = view.atlasStore.getState().selectedIds || [];
     const before = this.markedGroups(view);
@@ -4696,11 +4704,11 @@ class AtlasLink {
     if (!changed) { new Notice("None of the selected tokens are in a group."); return false; }
     this.saveMarkedGroups(view, list);
     new Notice("Selected tokens removed from their group.");
+    this.drawSelBar(view);
     return true;
   }
   /** Command: select every token of the group the selected token belongs to. */
-  selectGroupOfSelected() {
-    const view = this.selectionView();
+  selectGroupOfSelected(view = this.selectionView()) {
     if (!view) return false;
     const st = view.atlasStore.getState();
     const id = (st.selectedIds || [])[0];
@@ -4708,6 +4716,64 @@ class AtlasLink {
     if (!g) { new Notice("That token isn't in a group."); return false; }
     if (typeof st.setSelection === "function") st.setSelection(g.tokens);
     return true;
+  }
+  /** What the floating bar should offer for the current selection. */
+  selectionInfo(view) {
+    const st = view.atlasStore.getState();
+    const toks = (st.objects && st.objects.tokens) || {};
+    const ids = (st.selectedIds || []).filter((id) => toks[id] && toks[id].kind === "character");
+    if (!ids.length) return null;
+    const marks = this.markedGroups(view);
+    const groupOf = (id) => marks.find((g) => g.tokens.includes(id)) || null;
+    const name = String(toks[ids[0]].name || "token").replace(/\s+\d+$/, "");
+    const norm = (p) => String(p || "").trim().toLowerCase();
+    const paths = new Set(ids.map((id) => norm(toks[id].statblockPath)));
+    const same = paths.size === 1 && !paths.has("");
+    const g = groupOf(ids[0]);
+    const wholeGroup = !!g && ids.length === g.tokens.length && ids.every((id) => g.tokens.includes(id));
+    const inGroups = ids.some(groupOf);
+    if (ids.length === 1) return g ? { kind: "member", text: `${name}: in a group of ${g.tokens.length}`, group: g } : null;
+    if (wholeGroup) return { kind: "group", text: `Group of ${g.tokens.length}× ${name}` };
+    if (!same) return { kind: "mixed", text: `${ids.length} tokens: a group is one kind of creature`, inGroups };
+    return { kind: "can", text: `${ids.length}× ${name} selected`, inGroups };
+  }
+  /** Our own small bar over the map (not part of Atlas): group / ungroup the
+   *  tokens selected there, without the command palette. */
+  drawSelBar(view) {
+    const host = view.containerEl || view.contentEl;
+    if (!host || !host.ownerDocument) return;
+    let bar = this.selBars && this.selBars.get(view);
+    let info = null;
+    try { info = this.selectionInfo(view); } catch (e) { info = null; }
+    if (!info) { if (bar) bar.addClass("ri-hidden"); return; }
+    if (!bar) {
+      bar = host.createDiv({ cls: "ri-atlas-selbar" });
+      if (!this.selBars) this.selBars = new Map();
+      this.selBars.set(view, bar);
+    }
+    bar.removeClass("ri-hidden");
+    bar.empty();
+    const icon = bar.createSpan({ cls: "ri-atlas-selbar-icon" });
+    setIcon(icon, "users");
+    bar.createSpan({ cls: "ri-atlas-selbar-text", text: info.text });
+    const btn = (label, ic, fn, cta) => {
+      const b = bar.createEl("button", { cls: cta ? "mod-cta" : "" });
+      setIcon(b.createSpan({ cls: "ri-atlas-selbar-bicon" }), ic);
+      b.createSpan({ text: label });
+      b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); fn(); };
+      b.addEventListener("pointerdown", (e) => e.stopPropagation());
+    };
+    if (info.kind === "can") btn("Group for initiative", "users", () => this.groupSelected(view), true);
+    if (info.kind === "group" || (info.kind !== "member" && info.inGroups)) btn("Ungroup", "user-x", () => this.ungroupSelected(view));
+    if (info.kind === "member") {
+      btn("Select group", "scan", () => { this.selectGroupOfSelected(view); });
+      btn("Remove from group", "user-x", () => this.ungroupSelected(view));
+    }
+  }
+  removeSelBars() {
+    if (!this.selBars) return;
+    for (const [, bar] of this.selBars) bar.remove();
+    this.selBars.clear();
   }
   /** A fight started from Atlas: marked groups become one group row each; the
    *  other tokens of those creatures stay one by one. */
@@ -4822,7 +4888,12 @@ class AtlasLink {
     if (this.busy) return;
     if (!this.plugin.settings.atlasSync || !this.installed) return;
     const views = this.mapViews();
-    for (const v of [...this.views.keys()]) if (!views.includes(v)) { try { this.views.get(v).unsub(); } catch (e) { /* */ } this.views.delete(v); }
+    for (const v of [...this.views.keys()]) if (!views.includes(v)) {
+      try { this.views.get(v).unsub(); } catch (e) { /* */ }
+      this.views.delete(v);
+      const bar = this.selBars && this.selBars.get(v);
+      if (bar) { bar.remove(); this.selBars.delete(v); }
+    }
     if (!views.length) return;
     // Watch every open map even when no fight is running, so Atlas's own
     // "Start fight" can start one here.

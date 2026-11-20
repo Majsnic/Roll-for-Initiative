@@ -1,10 +1,11 @@
 # Changelog
 
 ## 1.8.3
-- **Mark groups on the Atlas map.** Select tokens on an Atlas map (Shift-click or drag a box) and run the command **Atlas: group the selected tokens**.
+- **Mark groups on the Atlas map.** Select tokens on an Atlas map (Shift-click or drag a box), and a small bar appears at the bottom of the map: **Group for initiative**. (Also in the command palette: **Atlas: group the selected tokens**.)
   - The next fight started from Atlas runs each marked group as one row (*Goblin Warrior A*, *Goblin Warrior B*…). The unmarked tokens of that creature stay one by one.
   - The live sync links each group row to exactly its marked tokens, and remembers it.
-  - Also new: **Atlas: remove the selected tokens from their group** and **Atlas: select the whole group of the selected token**.
+  - Select one grouped token, and the bar offers **Select group** and **Remove from group**; select a whole group, and it offers **Ungroup**.
+  - The bar is Roll for Initiative's own, shown over the map. Atlas itself isn't changed.
 - **"Who takes the damage?" on the map.** With an Atlas map open, the window moves to the side and lets clicks through: click a fighter's token to apply the damage or healing. A group's token hits the group's pool; in *Several targets…* mode, clicking tokens ticks them.
 
 ## 1.8.2

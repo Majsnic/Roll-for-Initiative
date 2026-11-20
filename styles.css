@@ -2001,3 +2001,53 @@ button.ri-cond:hover {
 	color: var(--text-muted);
 	font-style: italic;
 }
+
+/* Our floating bar over an Atlas map (Roll for Initiative's, not Atlas's):
+   group the tokens selected there */
+.ri-atlas-selbar {
+	position: absolute;
+	left: 50%;
+	bottom: 72px;
+	transform: translateX(-50%);
+	z-index: 30;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px 6px 12px;
+	border-radius: 999px;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-primary);
+	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+	font-size: var(--font-ui-small);
+	white-space: nowrap;
+	pointer-events: auto;
+}
+.ri-atlas-selbar.ri-hidden {
+	display: none;
+}
+.ri-atlas-selbar-icon {
+	display: inline-flex;
+	color: var(--interactive-accent);
+}
+.ri-atlas-selbar-icon svg,
+.ri-atlas-selbar-bicon svg {
+	width: 15px;
+	height: 15px;
+}
+.ri-atlas-selbar-text {
+	color: var(--text-normal);
+	font-weight: 500;
+}
+.ri-atlas-selbar button {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 4px 10px;
+	border-radius: 999px;
+	height: auto;
+	font-size: var(--font-ui-small);
+	cursor: pointer;
+}
+.ri-atlas-selbar-bicon {
+	display: inline-flex;
+}
