@@ -2051,3 +2051,40 @@ button.ri-cond:hover {
 .ri-atlas-selbar-bicon {
 	display: inline-flex;
 }
+/* the bar's damage / heal part (physical dice) */
+.ri-atlas-selbar-hp {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+.ri-atlas-selbar-sep {
+	width: 1px;
+	height: 18px;
+	background: var(--background-modifier-border);
+	margin: 0 2px;
+}
+.ri-atlas-selbar input.ri-atlas-selbar-amt {
+	width: 64px;
+	height: 26px;
+	padding: 2px 8px;
+	border-radius: 999px;
+	font-size: var(--font-ui-small);
+	text-align: center;
+}
+.ri-atlas-selbar button.ri-damage {
+	color: var(--text-on-accent);
+	background: var(--color-red);
+}
+.ri-atlas-selbar button.ri-heal {
+	color: var(--text-on-accent);
+	background: var(--color-green);
+}
+.ri-atlas-selbar button.ri-damage:hover,
+.ri-atlas-selbar button.ri-heal:hover {
+	filter: brightness(1.1);
+}
+.ri-atlas-selbar-text {
+	max-width: 260px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}

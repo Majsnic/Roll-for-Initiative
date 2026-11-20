@@ -40,7 +40,7 @@ An initiative tracker for [Obsidian](https://obsidian.md) that keeps the whole f
 - **Auto-end**: combat ends by itself when every enemy is down.
 - **Statblock pane**: click a monster's name to open its statblock in the sidebar. A character's name opens their character card there: the Atlas VTT card (the layout Atlas shows on Ctrl-hover), or without Atlas the compact card from One DnD Character Sheet 1.10.0+.
 - **Add box with suggestions**: type `3 gob` and press Enter to add 3 Goblins.
-- **Atlas VTT**: start fights from Atlas encounters and keep initiative, HP and conditions in sync with an open Atlas map. When the turn moves on, the map pans to that creature's token.
+- **Atlas VTT**: start fights from Atlas encounters and keep initiative, HP and conditions in sync with an open Atlas map. When the turn moves on, that creature's token (or every standing token of a group) is selected and the map pans to it.
 - **Game systems**: switch between D&D 5e (2024) and Cyberpunk RED in Settings.
 
 | Encounter card | Damage / heal box |
@@ -151,6 +151,10 @@ The likely targets come first:
 - for healing, the healer's own side.
 
 **With an Atlas map open**, you can also just **click the token** on the map: the window moves to the side and lets clicks through, and clicking a fighter's token applies the damage (or healing) to them. A group's token hits the group's pool. In *Several targets…* mode, clicking tokens ticks them.
+
+**Rolls made in Atlas** (from a monster's statblock or a character's card on the map) open the window too.
+
+**Physical dice:** during a fight, select fighters' tokens on the Atlas map, and the bar over the map gets an amount box with **Damage** and **Heal**. Type what the table rolled and click (Enter = damage, Shift+Enter = heal). It goes to every selected fighter; a group's tokens hit its pool once.
 
 Attack rolls, checks and initiative rolls are ignored. Turn it off under **Settings → Rolled damage and healing**.
 

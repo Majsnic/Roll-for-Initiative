@@ -79,7 +79,7 @@ const DEFAULT_SETTINGS = {
   atlasSync: true,
   atlasStartsRoll: true,
   atlasGroups: {}, // map path -> [{ id, tokens: [tokenId…], pair }] marked on the map
-  atlasFollowTurn: true, // center the open Atlas map on whose turn it is
+  atlasFollowTurn: true, // select + center whose turn it is on the open Atlas map
   atlasFolder: "atlas-vtt",
   combatNote: "Roll Initiative.md",
   openCombatNote: true,
@@ -4529,7 +4529,18 @@ class AtlasLink {
     const rec = { viewId: view.viewId || Math.random().toString(36).slice(2), store: view.atlasStore, entries: entryIds(), added: [], addTimer: null };
     let lastSel = "";
     const selNow = () => { try { return (view.atlasStore.getState().selectedIds || []).join(","); } catch (e) { return ""; } };
+    const logTop = () => { try { const l = view.atlasStore.getState().diceLog || []; return l.length ? l[0].id : null; } catch (e) { return null; } };
+    let lastRoll = logTop();
     rec.unsub = view.atlasStore.subscribe(() => {
+      // a roll in Atlas (its statblocks / character cards): ask who takes the damage
+      const top = logTop();
+      if (top && top !== lastRoll) {
+        const log = view.atlasStore.getState().diceLog || [];
+        const fresh = [];
+        for (const e of log) { if (e.id === lastRoll) break; fresh.push(e); }
+        lastRoll = top;
+        for (const e of fresh.reverse()) this.onAtlasRoll(e).catch((err) => console.warn("Roll for Initiative: Atlas roll", err));
+      }
       const sel = selNow();
       if (sel !== lastSel) {
         lastSel = sel;
@@ -4626,8 +4637,11 @@ class AtlasLink {
    *  "fit to token" moves the view. */
   centerOn(view, tokenId) {
     try {
-      const tok = view.atlasStore.getState().objects.tokens[tokenId];
-      if (!tok || !Number.isFinite(tok.x) || !Number.isFinite(tok.y)) return false;
+      const all = view.atlasStore.getState().objects.tokens || {};
+      const list = (Array.isArray(tokenId) ? tokenId : [tokenId]).map((id) => all[id]).filter((t) => t && Number.isFinite(t.x) && Number.isFinite(t.y));
+      if (!list.length) return false;
+      // one token: its centre; a group: the middle of its tokens
+      const tok = { x: list.reduce((a, t) => a + t.x, 0) / list.length, y: list.reduce((a, t) => a + t.y, 0) / list.length };
       const svc = view.serviceManager && view.serviceManager.getRendererService && view.serviceManager.getRendererService();
       const vp = (svc && svc.getViewport && svc.getViewport()) || (view.renderer && view.renderer.getViewportInstance && view.renderer.getViewportInstance());
       if (!vp) return false;
@@ -4638,6 +4652,25 @@ class AtlasLink {
     } catch (e) {
       return false;
     }
+  }
+
+  /** A roll made in Atlas (a statblock or character card on the map): a
+   *  damage or healing roll opens "Who takes the damage?" like any other. */
+  async onAtlasRoll(e) {
+    const src = (e && e.source) || {};
+    if (src.type !== "statblock" && !src.abilityName) return false;
+    const formula = String(e.formula || "");
+    if (!formula || /(^|[^\d])1?d20\b/i.test(formula)) return false; // attacks, checks, saves
+    const total = Number(e.total);
+    if (!Number.isFinite(total)) return false;
+    let whoPath = null;
+    if (src.statblockPath) {
+      const f = this.app.vault.getAbstractFileByPath(obsidian.normalizePath ? obsidian.normalizePath(src.statblockPath) : src.statblockPath);
+      if (f instanceof TFile) whoPath = (this.plugin.bridge.sheetOfCompanion(f) || f).path;
+    }
+    const action = src.abilityName || null;
+    const kind = /\b(heal|healing|cure|léč)/i.test(action || "") ? "healing" : "damage";
+    return this.plugin.onRolled({ total, kind, who: src.tokenName || null, whoPath, action, formula, crit: !!e.crit });
   }
 
   // ---- picking a creature by clicking its token ----
@@ -4661,6 +4694,7 @@ class AtlasLink {
         const now = store.getState().selectedIds || [];
         const was = before;
         before = now.slice();
+        if (this.autoSelecting) return;
         if (now.length !== 1 || (was.length === 1 && was[0] === now[0])) return;
         const c = this.combatantOfToken(view, session, now[0]);
         if (c) onPick(c);
@@ -4756,15 +4790,49 @@ class AtlasLink {
     if (!same) return { kind: "mixed", text: `${ids.length} tokens: a group is one kind of creature`, inGroups };
     return { kind: "can", text: `${ids.length}× ${name} selected`, inGroups };
   }
+  /** The fighters of the running fight behind the tokens selected on a map
+   *  (a group counts once, however many of its tokens are selected). */
+  selectedFighters(view, session = this.liveFight && this.liveFight.get(view)) {
+    if (!session || !session.isRunning || !session.isRunning()) return [];
+    const st = view.atlasStore.getState();
+    const out = [];
+    for (const id of st.selectedIds || []) {
+      let c = null;
+      try { c = this.combatantOfToken(view, session, id); } catch (e) { c = null; }
+      if (c && !out.includes(c)) out.push(c);
+    }
+    return out;
+  }
+  /** Damage / heal typed on the bar (physical dice): applied to every
+   *  selected fighter; a group token hits the group's pool. */
+  async hpFromBar(view, amount, heal) {
+    amount = Math.abs(Math.round(Number(amount)));
+    if (!amount) return false;
+    const cached = this.liveFight && this.liveFight.get(view);
+    const names = this.selectedFighters(view).map((c) => c.name);
+    if (!cached || !names.length) return false;
+    const session = (await this.plugin.findSession({ sourcePath: cached.sourcePath, id: cached.enc.id || "" })) || cached;
+    const targets = names.map((n) => session.enc.combatants.find((c) => c.name === n)).filter(Boolean);
+    for (const c of targets) await session.changeHp(c, amount, heal ? "heal" : "damage");
+    if (targets.length) new Notice(`${targets.map((c) => c.name).join(", ")}: ${heal ? "+" : "−"}${amount} HP`);
+    return targets.length > 0;
+  }
   /** Our own small bar over the map (not part of Atlas): group / ungroup the
-   *  tokens selected there, without the command palette. */
+   *  tokens selected there, without the command palette; in a fight also
+   *  damage / heal for the selected fighters (physical dice). */
   drawSelBar(view) {
     const host = view.containerEl || view.contentEl;
     if (!host || !host.ownerDocument) return;
     let bar = this.selBars && this.selBars.get(view);
     let info = null;
     try { info = this.selectionInfo(view); } catch (e) { info = null; }
-    if (!info) { if (bar) bar.addClass("ri-hidden"); return; }
+    let fighters = [];
+    try { fighters = this.selectedFighters(view); } catch (e) { fighters = []; }
+    if (!info && !fighters.length) { if (bar) { bar.addClass("ri-hidden"); bar.riKey = ""; } return; }
+    if (!info) info = { kind: "fight", text: fighters.map((c) => c.name).join(", ") };
+    // don't rebuild (and lose a half-typed number) when nothing changed
+    const key = `${info.kind}|${info.text}|${fighters.map((c) => c.name).join(",")}`;
+    if (bar && bar.riKey === key && !bar.hasClass("ri-hidden")) return;
     if (!bar) {
       // In the window's body, over everything (Atlas's own layers can't cover it),
       // placed over the bottom of the map.
@@ -4774,6 +4842,7 @@ class AtlasLink {
       this.selBars.set(view, bar);
     }
     bar.removeClass("ri-hidden");
+    bar.riKey = key;
     try {
       const r = (view.contentEl || host).getBoundingClientRect();
       const win = host.ownerDocument.defaultView;
@@ -4784,7 +4853,7 @@ class AtlasLink {
     } catch (e) { /* keep the CSS default */ }
     bar.empty();
     const icon = bar.createSpan({ cls: "ri-atlas-selbar-icon" });
-    setIcon(icon, "users");
+    setIcon(icon, info.kind === "fight" ? "swords" : "users");
     bar.createSpan({ cls: "ri-atlas-selbar-text", text: info.text });
     const btn = (label, ic, fn, cta) => {
       const b = bar.createEl("button", { cls: cta ? "mod-cta" : "" });
@@ -4798,6 +4867,29 @@ class AtlasLink {
     if (info.kind === "member") {
       btn("Select group", "scan", () => { this.selectGroupOfSelected(view); });
       btn("Remove from group", "user-x", () => this.ungroupSelected(view));
+    }
+    if (fighters.length) {
+      // physical dice: type what the table rolled
+      const hp = bar.createDiv({ cls: "ri-atlas-selbar-hp" });
+      if (info.kind !== "fight") hp.createSpan({ cls: "ri-atlas-selbar-sep" });
+      const input = hp.createEl("input", { type: "number", cls: "ri-atlas-selbar-amt", attr: { min: "0", placeholder: "HP", "aria-label": "Amount" } });
+      for (const ev of ["pointerdown", "keydown", "keyup", "wheel"]) input.addEventListener(ev, (e) => e.stopPropagation());
+      const go = (heal) => {
+        const v = Number(input.value);
+        if (!Number.isFinite(v) || !v) { input.focus(); return; }
+        input.value = "";
+        this.hpFromBar(view, v, heal).catch((err) => console.warn("Roll for Initiative: bar HP", err));
+      };
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(e.shiftKey); } });
+      const hbtn = (label, ic, cls, heal) => {
+        const b = hp.createEl("button", { cls });
+        setIcon(b.createSpan({ cls: "ri-atlas-selbar-bicon" }), ic);
+        b.createSpan({ text: label });
+        b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); go(heal); };
+        b.addEventListener("pointerdown", (e) => e.stopPropagation());
+      };
+      hbtn("Damage", "sword", "ri-damage", false);
+      hbtn("Heal", "heart", "ri-heal", true);
     }
   }
   removeSelBars() {
@@ -4931,9 +5023,9 @@ class AtlasLink {
     this.busy = true;
     try {
       const session = await this.plugin.syncSession();
-      if (!session) return;
+      if (!session) { if (this.liveFight) this.liveFight.clear(); for (const v of views) this.drawSelBar(v); return; }
       const ids = await this.loadConditionIds();
-      for (const v of views) this.push(v, session, ids);
+      for (const v of views) { this.push(v, session, ids); this.drawSelBar(v); }
     } catch (e) {
       console.warn("Roll for Initiative: Atlas sync failed", e);
     } finally {
@@ -4943,6 +5035,7 @@ class AtlasLink {
 
   push(view, session, ids) {
     const store = view.atlasStore;
+    (this.liveFight || (this.liveFight = new Map())).set(view, session);
     const map = this.mapping(view, session);
     if (!map.size && ![...map.groups.values()].some((l) => l.length)) return;
     this.pushing = true;
@@ -5057,7 +5150,15 @@ class AtlasLink {
         const turnKey = `${this.fightKey(session)}|${enc.round}|${cur ? cur.name : ""}`;
         if (curTok && this.plugin.settings.atlasFollowTurn && (this.lastTurn || (this.lastTurn = new Map())).get(view) !== turnKey) {
           this.lastTurn.set(view, turnKey);
-          this.centerOn(view, curTok);
+          // whose turn it is: select its token, or every standing token of a group
+          const all = tokensOf(cur);
+          const standing = all.filter((id) => S().objects.tokens[id] && ((((S().objects.tokens[id] || {}).resources || {}).hp || {}).current ?? 1) > 0);
+          const pick = standing.length ? standing : [curTok];
+          if (typeof S().setSelection === "function") {
+            this.autoSelecting = true;
+            try { S().setSelection(pick); } catch (e) { /* older Atlas */ } finally { this.autoSelecting = false; }
+          }
+          this.centerOn(view, pick);
         }
         const i2 = S().initiative;
         if (!i2.isActive || i2.round !== enc.round || i2.currentIndex !== curIdx) {
@@ -5270,7 +5371,7 @@ class InitiativeSettingTab extends PluginSettingTab {
         : "Atlas VTT isn't enabled - these options do nothing until it is.",
     });
     toggle("Live-sync with open Atlas maps", "While a fight runs: initiative order, current turn, round, HP and conditions go onto the matching map tokens, and HP / conditions changed on the map come back (to character sheets too). Uses Atlas internals - if an Atlas update changes them, turn this off.", "atlasSync");
-    toggle("Center the map on whose turn it is", "When the turn moves on, the open Atlas map pans to that creature's token (the zoom stays as it is). A group's turn goes to its first standing token.", "atlasFollowTurn");
+    toggle("Select and center whose turn it is", "When the turn moves on, that creature's token gets selected on the open Atlas map and the map pans to it (the zoom stays as it is). A group's turn selects every standing token of the group.", "atlasFollowTurn");
     toggle("Atlas \"Start fight\" starts Roll for Initiative", "When Atlas adds an encounter to its initiative tracker (Start fight / Add to initiative), the same fight starts here: rolled, in the sidebar and the Roll Initiative note. A single token added mid-fight joins the running fight.", "atlasStartsRoll");
     new Setting(containerEl)
       .setName("Atlas folder")

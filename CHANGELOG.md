@@ -6,8 +6,10 @@
   - The live sync links each group row to exactly its marked tokens, and remembers it.
   - Select one grouped token, and the bar offers **Select group** and **Remove from group**; select a whole group, and it offers **Ungroup**.
   - The bar is Roll for Initiative's own, drawn over the map above Atlas's layers. Atlas itself isn't changed.
-- **The Atlas map follows the turn.** When the turn moves on, the open Atlas map pans to that creature's token; the zoom stays as it is. A group's turn goes to its first standing token. Turn it off in Settings → Atlas VTT → *Center the map on whose turn it is*.
+- **The Atlas map follows the turn.** When the turn moves on, that creature's token gets selected on the open Atlas map and the map pans to it; the zoom stays as it is. On a group's turn, every standing token of the group is selected, so you can see which tokens to move. Turn it off in Settings → Atlas VTT → *Select and center whose turn it is*.
+- **"Who takes the damage?" for Atlas rolls.** Damage and healing rolled in Atlas itself (from a monster's statblock or a character's card on the map) now open the window too, like Dice Roller rolls. Attack rolls and checks (d20) don't.
 - **"Who takes the damage?" on the map.** With an Atlas map open, the window moves to the side and lets clicks through: click a fighter's token to apply the damage or healing. A group's token hits the group's pool; in *Several targets…* mode, clicking tokens ticks them.
+- **Physical dice: damage and heal on the map.** During a fight, selecting fighters' tokens adds an amount box with **Damage** and **Heal** to the bar over the map. Type what the table rolled and click (Enter = damage, Shift+Enter = heal). It goes to every selected fighter; a group's tokens hit its pool once.
 
 ## 1.8.2
 - **Groups on Atlas VTT maps.** A group (army) is now linked to as many tokens of its creature on the open Atlas map as it has members. Before, the live sync left groups out.
