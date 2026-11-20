@@ -122,6 +122,24 @@ For when the party splits up, like a city attack where each group fights its own
 
 ![Several initiatives at once](docs/screenshots/several-initiatives.png)
 
+### Fights on an Atlas VTT map
+
+With [Atlas VTT](https://github.com/atlas-vtt/atlas-vtt) maps, the fight can run straight from the map, in Roll for Initiative's own tracker. Atlas's initiative tracker isn't needed.
+
+- **Start from the map:** select tokens (Shift-click or drag a box). A bar appears at the bottom of the map: press **Roll initiative**. A marked group comes in whole. While a fight runs, selected tokens that aren't in it get **Add to fight**.
+- **Groups:** **Group for initiative** on the same bar marks the selected tokens as one group row with a shared HP pool. Marks stay on the map for later fights.
+- **Whose turn it is:** a yellow ring stays around that token for the whole turn; on a group's turn, around every standing token of the group. The tokens can still be selected and moved one by one, and the map pans to them.
+- **Damage on the map:** select fighters' tokens and the bar gets an amount box with **Damage** and **Heal** (for physical dice). Rolls made in Atlas (statblocks, character cards) open **Who takes the damage?**, and you can click the token on the map to apply it.
+- HP and conditions stay in sync with the tokens. To fill Atlas's own tracker too, turn on Settings → Atlas VTT → *Use Atlas's initiative tracker too*.
+
+| Roll initiative from the map | Whose turn it is |
+|---|---|
+| ![The bar over the map with Roll initiative](docs/screenshots/atlas-roll-initiative-bar.png) | ![Yellow rings around a group's tokens](docs/screenshots/atlas-turn-rings.png) |
+
+| Damage / heal for physical dice | Who takes the damage? over the map |
+|---|---|
+| ![Damage and Heal on the bar](docs/screenshots/atlas-damage-bar.png) | ![The damage window next to the map](docs/screenshots/atlas-damage-window.png) |
+
 ### Character cards in the statblock pane
 
 Click a character's name in the tracker, and their character card opens in the pane under it, where monster statblocks open.

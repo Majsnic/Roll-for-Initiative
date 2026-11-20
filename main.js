@@ -4498,6 +4498,7 @@ class AtlasLink {
     p.registerEvent(this.app.workspace.on("layout-change", () => this.tick()));
     // the bar belongs to its map: hide it while another tab is shown
     p.registerEvent(this.app.workspace.on("active-leaf-change", () => { for (const v of this.views.keys()) this.drawSelBar(v); }));
+    p.registerEvent(this.app.workspace.on("resize", () => { for (const v of this.views.keys()) this.placeBar(v); }));
     p.registerEvent(this.app.workspace.on("roll-initiative:change", () => this.tick()));
     p.register(() => this.detachAll());
   }
@@ -5001,7 +5002,7 @@ class AtlasLink {
     // don't rebuild (and lose a half-typed number) when nothing changed
     const lf = this.liveFight && this.liveFight.get(view);
     const key = `${info.kind}|${info.text}|${fighters.map((c) => c.name).join(",")}|${lf && lf.isRunning && lf.isRunning() ? `run:${this.selectedOutsideFight(view, lf)}` : "idle"}`;
-    if (bar && bar.riKey === key && !bar.hasClass("ri-hidden")) return;
+    if (bar && bar.riKey === key && !bar.hasClass("ri-hidden")) { this.placeBar(view); return; }
     if (!bar) {
       // In the window's body, over everything (Atlas's own layers can't cover it),
       // placed over the bottom of the map.
@@ -5012,14 +5013,7 @@ class AtlasLink {
     }
     bar.removeClass("ri-hidden");
     bar.riKey = key;
-    try {
-      const r = this.mapRect(view, host);
-      const win = host.ownerDocument.defaultView;
-      if (r && r.width && win) {
-        bar.style.left = `${Math.round(r.left + r.width / 2)}px`;
-        bar.style.bottom = `${Math.round(win.innerHeight - r.bottom + 72)}px`;
-      }
-    } catch (e) { /* keep the CSS default */ }
+    this.placeBar(view);
     bar.empty();
     const icon = bar.createSpan({ cls: "ri-atlas-selbar-icon" });
     setIcon(icon, info.kind === "fight" ? "swords" : "users");
@@ -5067,6 +5061,21 @@ class AtlasLink {
       hbtn("Damage", "sword", "ri-damage", false);
       hbtn("Heal", "heart", "ri-heal", true);
     }
+  }
+  /** Keep the bar centred over the bottom of its map (the map moves when
+   *  sidebars open or close, or the window is resized). */
+  placeBar(view) {
+    const bar = this.selBars && this.selBars.get(view);
+    const host = view.containerEl || view.contentEl;
+    if (!bar || !host || !host.ownerDocument) return;
+    try {
+      const r = this.mapRect(view, host);
+      const win = host.ownerDocument.defaultView;
+      if (r && r.width && win) {
+        bar.style.left = `${Math.round(r.left + r.width / 2)}px`;
+        bar.style.bottom = `${Math.round(win.innerHeight - r.bottom + 72)}px`;
+      }
+    } catch (e) { /* keep the CSS default */ }
   }
   /** Where the map is on screen. Atlas draws into the view's container (its
    *  contentEl can be 0 × 0), so measure the container first. */
