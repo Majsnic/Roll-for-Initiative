@@ -4931,7 +4931,7 @@ class AtlasLink {
     const inGroups = ids.some(groupOf);
     if (ids.length === 1) return g ? { kind: "member", text: `${name}: in a group of ${g.tokens.length}`, group: g } : { kind: "one", text: String(toks[ids[0]].name || "token") };
     if (wholeGroup) return { kind: "group", text: `Group of ${g.tokens.length}× ${name}` };
-    if (!same) return { kind: "mixed", text: `${ids.length} tokens: a group is one kind of creature`, inGroups };
+    if (!same) return { kind: "mixed", text: `${ids.length} tokens selected`, inGroups };
     return { kind: "can", text: `${ids.length}× ${name} selected`, inGroups };
   }
   selectedCount(view) {
@@ -4993,8 +4993,8 @@ class AtlasLink {
     let fighters = [];
     try { fighters = this.selectedFighters(view); } catch (e) { fighters = []; }
     try {
-      const vr = (view.contentEl || host).getBoundingClientRect();
-      if (info && (!vr || !vr.width || !vr.height)) info = null, fighters = []; // map tab not shown
+      const vr = this.mapRect(view, host);
+      if (info && vr && (!vr.width || !vr.height)) info = null, fighters = []; // map tab not shown
     } catch (e) { /* keep */ }
     if (!info && !fighters.length) { if (bar) { bar.addClass("ri-hidden"); bar.riKey = ""; } return; }
     if (!info) info = { kind: "fight", text: fighters.map((c) => c.name).join(", ") };
@@ -5013,7 +5013,7 @@ class AtlasLink {
     bar.removeClass("ri-hidden");
     bar.riKey = key;
     try {
-      const r = (view.contentEl || host).getBoundingClientRect();
+      const r = this.mapRect(view, host);
       const win = host.ownerDocument.defaultView;
       if (r && r.width && win) {
         bar.style.left = `${Math.round(r.left + r.width / 2)}px`;
@@ -5067,6 +5067,18 @@ class AtlasLink {
       hbtn("Damage", "sword", "ri-damage", false);
       hbtn("Heal", "heart", "ri-heal", true);
     }
+  }
+  /** Where the map is on screen. Atlas draws into the view's container (its
+   *  contentEl can be 0 × 0), so measure the container first. */
+  mapRect(view, host) {
+    let measured = false;
+    for (const el of [view.containerEl, view.contentEl, host]) {
+      if (!el || !el.getBoundingClientRect) continue;
+      measured = true;
+      const r = el.getBoundingClientRect();
+      if (r && r.width > 0 && r.height > 0) return r;
+    }
+    return measured ? { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 } : null; // null: can't tell
   }
   removeSelBars() {
     if (!this.selBars) return;
