@@ -79,7 +79,8 @@ const DEFAULT_SETTINGS = {
   atlasSync: true,
   atlasStartsRoll: true,
   atlasGroups: {}, // map path -> [{ id, tokens: [tokenId…], pair }] marked on the map
-  atlasFollowTurn: true, // select + center whose turn it is on the open Atlas map
+  atlasFollowTurn: true, // center the open Atlas map on whose turn it is
+  atlasTurnRing: true, // ring around whose turn it is (all of a group's tokens) on the map
   atlasFolder: "atlas-vtt",
   combatNote: "Roll Initiative.md",
   openCombatNote: true,
@@ -4517,6 +4518,99 @@ class AtlasLink {
     for (const [, rec] of this.views) { try { rec.unsub(); } catch (e) { /* gone */ } }
     this.views.clear();
     this.removeSelBars();
+    this.clearTurnRings();
+  }
+
+  // ---- whose turn it is: rings over the map ----
+  // Roll for Initiative's own marks, drawn over the map canvas (pointer events
+  // pass through, so the tokens can still be clicked, dragged and selected).
+  // Atlas itself isn't changed.
+
+  /** Show the turn ring on these tokens of a map (null / [] = none). */
+  setTurnRing(view, ids) {
+    if (!this.rings) this.rings = new Map();
+    let r = this.rings.get(view);
+    const list = (ids || []).filter(Boolean);
+    if (!list.length) {
+      if (r) { r.stop = true; if (r.box) r.box.remove(); this.rings.delete(view); }
+      return;
+    }
+    if (r && r.ids.join() === list.join()) return;
+    if (!r) {
+      r = { ids: list, marks: new Map(), box: null, stop: false };
+      this.rings.set(view, r);
+      this.ringLoop(view, r);
+    }
+    r.ids = list;
+  }
+  clearTurnRings() {
+    if (!this.rings) return;
+    for (const [v] of [...this.rings]) this.setTurnRing(v, null);
+  }
+  ringCanvas(view) {
+    const host = view.contentEl || view.containerEl;
+    if (!host || !host.querySelectorAll) return null;
+    let best = null, area = 0;
+    for (const c of host.querySelectorAll("canvas")) {
+      const b = c.getBoundingClientRect();
+      if (b.width * b.height > area) { area = b.width * b.height; best = c; }
+    }
+    return best;
+  }
+  ringViewport(view) {
+    try {
+      const svc = view.serviceManager && view.serviceManager.getRendererService && view.serviceManager.getRendererService();
+      return (svc && svc.getViewport && svc.getViewport()) || (view.renderer && view.renderer.getViewportInstance && view.renderer.getViewportInstance()) || null;
+    } catch (e) { return null; }
+  }
+  /** Keep the rings on their tokens while the map pans, zooms or the tokens move. */
+  drawRings(view, r) {
+    const canvas = this.ringCanvas(view);
+    const vp = this.ringViewport(view);
+    const doc = (canvas && canvas.ownerDocument) || null;
+    const rect = canvas ? canvas.getBoundingClientRect() : null;
+    const shown = !!(canvas && vp && rect && rect.width > 0 && rect.height > 0 && canvas.offsetParent !== null);
+    if (!shown) { if (r.box) r.box.style.display = "none"; return; }
+    if (!r.box) {
+      r.box = doc.body.createDiv ? doc.body.createDiv({ cls: "ri-turn-rings" }) : doc.body.appendChild(doc.createElement("div"));
+      r.box.className = "ri-turn-rings";
+    }
+    const box = r.box;
+    box.style.display = "";
+    box.style.left = `${rect.left}px`; box.style.top = `${rect.top}px`;
+    box.style.width = `${rect.width}px`; box.style.height = `${rect.height}px`;
+    const st = view.atlasStore.getState();
+    const toks = (st.objects && st.objects.tokens) || {};
+    const grid = (st.grid && st.grid.size) || 70;
+    const scale = (vp.scale && vp.scale.x) || 1;
+    const cw = canvas.width && canvas.clientWidth ? canvas.clientWidth / (vp.screenWidth || canvas.clientWidth) : 1;
+    const keep = new Set();
+    for (const id of r.ids) {
+      const t = toks[id];
+      if (!t || !Number.isFinite(t.x) || !Number.isFinite(t.y) || t.offMap === true) continue;
+      const hp = ((t.resources || {}).hp || {}).current;
+      if (hp !== undefined && hp <= 0) continue; // fallen: no ring
+      const p = vp.toScreen ? vp.toScreen(t.x, t.y) : { x: (t.x - vp.left) * scale, y: (t.y - vp.top) * scale };
+      const d = Math.max(16, (Number(t.size) || 1) * grid * scale * cw) + 10;
+      let m = r.marks.get(id);
+      if (!m) { m = box.createDiv ? box.createDiv({ cls: "ri-turn-ring" }) : box.appendChild(doc.createElement("div")); m.className = "ri-turn-ring"; r.marks.set(id, m); }
+      m.style.width = m.style.height = `${Math.round(d)}px`;
+      m.style.left = `${Math.round(p.x * cw - d / 2)}px`;
+      m.style.top = `${Math.round(p.y * cw - d / 2)}px`;
+      keep.add(id);
+    }
+    for (const [id, m] of [...r.marks]) if (!keep.has(id)) { m.remove(); r.marks.delete(id); }
+  }
+  ringLoop(view, r) {
+    const host = view.contentEl || view.containerEl;
+    const win = (host && host.ownerDocument && host.ownerDocument.defaultView) || (typeof window !== "undefined" ? window : null);
+    const raf = win && win.requestAnimationFrame ? (f) => win.requestAnimationFrame(f) : (f) => setTimeout(f, 50);
+    const step = () => {
+      if (r.stop) return;
+      try { this.drawRings(view, r); } catch (e) { /* map closing */ }
+      raf(step);
+    };
+    step();
   }
 
   attach(view) {
@@ -5023,6 +5117,7 @@ class AtlasLink {
       this.views.delete(v);
       const bar = this.selBars && this.selBars.get(v);
       if (bar) { bar.remove(); this.selBars.delete(v); }
+      this.setTurnRing(v, null);
     }
     if (!views.length) return;
     // Watch every open map even when no fight is running, so Atlas's own
@@ -5031,7 +5126,7 @@ class AtlasLink {
     this.busy = true;
     try {
       const session = await this.plugin.syncSession();
-      if (!session) { if (this.liveFight) this.liveFight.clear(); if (this.turnSel) this.turnSel.clear(); for (const v of views) this.drawSelBar(v); return; }
+      if (!session) { if (this.liveFight) this.liveFight.clear(); this.clearTurnRings(); for (const v of views) this.drawSelBar(v); return; }
       const ids = await this.loadConditionIds();
       for (const v of views) { this.push(v, session, ids); this.drawSelBar(v); }
     } catch (e) {
@@ -5116,7 +5211,7 @@ class AtlasLink {
       const enc = session.enc;
       const ini = S().initiative;
       if (!ini || !Array.isArray(ini.entries)) return;
-      if (!session.isRunning() && this.turnSel) this.turnSel.delete(view);
+      if (!session.isRunning()) this.setTurnRing(view, null);
       if (session.isRunning()) {
         const tokensOf = (c) => (map.has(c.name) ? [map.get(c.name)] : (map.groups.get(c.name) || []));
         const ordered = enc.combatants.filter((c) => tokensOf(c).length && !c.off);
@@ -5148,7 +5243,7 @@ class AtlasLink {
           if (from >= 0 && from !== i && typeof S().reorderInitiative === "function") S().reorderInitiative(from, i);
         });
         const cur = enc.combatants.find((c) => c.current);
-        if ((!cur || !session.isRunning()) && this.turnSel) this.turnSel.delete(view);
+        if (!cur) this.setTurnRing(view, null);
         // a group's turn: its first token still standing (else its first token)
         let curTok = null;
         if (cur) {
@@ -5158,18 +5253,15 @@ class AtlasLink {
         const curIdx = curTok ? S().initiative.entries.findIndex((e) => e.tokenId === curTok) : -1;
         // the turn moved on: bring that token into view
         const turnKey = `${this.fightKey(session)}|${enc.round}|${cur ? cur.name : ""}`;
+        // whose turn it is: a ring around its token, or around every token of a
+        // group, that stays for the whole turn (the tokens stay free to use)
+        if (curTok && this.plugin.settings.atlasTurnRing) this.setTurnRing(view, tokensOf(cur));
+        else this.setTurnRing(view, null);
         if (curTok && this.plugin.settings.atlasFollowTurn && (this.lastTurn || (this.lastTurn = new Map())).get(view) !== turnKey) {
           this.lastTurn.set(view, turnKey);
-          // whose turn it is: select its token, or every standing token of a group
           const all = tokensOf(cur);
           const standing = all.filter((id) => S().objects.tokens[id] && ((((S().objects.tokens[id] || {}).resources || {}).hp || {}).current ?? 1) > 0);
-          const pick = standing.length ? standing : [curTok];
-          (this.turnSel || (this.turnSel = new Map())).set(view, pick);
-          if (typeof S().setSelection === "function") {
-            this.autoSelecting = true;
-            try { S().setSelection(pick); } catch (e) { /* older Atlas */ } finally { this.autoSelecting = false; }
-          }
-          this.centerOn(view, pick);
+          this.centerOn(view, standing.length ? standing : [curTok]);
         }
         const i2 = S().initiative;
         if (!i2.isActive || i2.round !== enc.round || i2.currentIndex !== curIdx) {
@@ -5382,7 +5474,8 @@ class InitiativeSettingTab extends PluginSettingTab {
         : "Atlas VTT isn't enabled - these options do nothing until it is.",
     });
     toggle("Live-sync with open Atlas maps", "While a fight runs: initiative order, current turn, round, HP and conditions go onto the matching map tokens, and HP / conditions changed on the map come back (to character sheets too). Uses Atlas internals - if an Atlas update changes them, turn this off.", "atlasSync");
-    toggle("Select and center whose turn it is", "When the turn moves on, that creature's token gets selected on the open Atlas map and the map pans to it (the zoom stays as it is). A group's turn selects every standing token of the group.", "atlasFollowTurn");
+    toggle("Mark whose turn it is", "A glowing ring around the token whose turn it is on the open Atlas map; on a group's turn, around every standing token of the group. It stays for the whole turn, and the tokens can still be selected and moved one by one.", "atlasTurnRing");
+    toggle("Center the map on whose turn it is", "When the turn moves on, the open Atlas map pans to that creature's token, or to the middle of a group's tokens (the zoom stays as it is).", "atlasFollowTurn");
     toggle("Atlas \"Start fight\" starts Roll for Initiative", "When Atlas adds an encounter to its initiative tracker (Start fight / Add to initiative), the same fight starts here: rolled, in the sidebar and the Roll Initiative note. A single token added mid-fight joins the running fight.", "atlasStartsRoll");
     new Setting(containerEl)
       .setName("Atlas folder")

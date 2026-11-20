@@ -2088,3 +2088,27 @@ button.ri-cond:hover {
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
+/* Whose turn it is on an Atlas map: Roll for Initiative's own rings over
+   the canvas; clicks go through to the tokens */
+.ri-turn-rings {
+	position: fixed;
+	overflow: hidden;
+	pointer-events: none;
+	z-index: var(--layer-status-bar, 15);
+}
+.ri-turn-ring {
+	position: absolute;
+	box-sizing: border-box;
+	border-radius: 50%;
+	border: 3px solid var(--color-yellow, #e0ac00);
+	box-shadow: 0 0 10px 3px rgba(224, 172, 0, 0.75), inset 0 0 8px 1px rgba(224, 172, 0, 0.5);
+	pointer-events: none;
+	animation: ri-turn-pulse 1.6s ease-in-out infinite;
+}
+@keyframes ri-turn-pulse {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+	.ri-turn-ring { animation: none; }
+}
