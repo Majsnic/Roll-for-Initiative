@@ -158,6 +158,7 @@ Start typing and it suggests character sheets, monsters from your monster folder
 - The command **Roll initiative for an Atlas encounter** starts a fight straight from one.
 
 **Live map sync** (Settings → Atlas VTT, on by default). While a fight runs and an Atlas map is open:
+- **The map follows the turn:** when the turn moves on, the open map pans to that creature's token (the zoom stays). A group's turn goes to its first standing token. Turn it off in Settings → Atlas VTT → *Center the map on whose turn it is*.
 - **"Who takes the damage?"** lets clicks through to the map: click a fighter's token to apply the damage or healing to them (a group token hits the group's pool).
 - Roll for Initiative → map: initiative order, current turn, round, HP (PCs from their sheets) and conditions are mirrored onto the matching tokens.
 - Map → Roll for Initiative: HP and conditions changed on the map come back. A PC's go onto their character sheet too, with the same dying / Unconscious rules as the sheet.

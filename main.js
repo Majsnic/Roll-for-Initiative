@@ -79,6 +79,7 @@ const DEFAULT_SETTINGS = {
   atlasSync: true,
   atlasStartsRoll: true,
   atlasGroups: {}, // map path -> [{ id, tokens: [tokenId…], pair }] marked on the map
+  atlasFollowTurn: true, // center the open Atlas map on whose turn it is
   atlasFolder: "atlas-vtt",
   combatNote: "Roll Initiative.md",
   openCombatNote: true,
@@ -4621,6 +4622,24 @@ class AtlasLink {
     return `${session.sourcePath}#${session.enc.id}`;
   }
 
+  /** Pan an open map to a token (keeps the zoom), the way Atlas's own
+   *  "fit to token" moves the view. */
+  centerOn(view, tokenId) {
+    try {
+      const tok = view.atlasStore.getState().objects.tokens[tokenId];
+      if (!tok || !Number.isFinite(tok.x) || !Number.isFinite(tok.y)) return false;
+      const svc = view.serviceManager && view.serviceManager.getRendererService && view.serviceManager.getRendererService();
+      const vp = (svc && svc.getViewport && svc.getViewport()) || (view.renderer && view.renderer.getViewportInstance && view.renderer.getViewportInstance());
+      if (!vp) return false;
+      if (typeof vp.animate === "function") vp.animate({ position: { x: tok.x, y: tok.y }, time: 400, ease: "easeInOutCubic" });
+      else if (typeof vp.moveCenter === "function") vp.moveCenter(tok.x, tok.y);
+      else return false;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   // ---- picking a creature by clicking its token ----
 
   /** The fighter (single or group) a token on this map belongs to. */
@@ -5034,6 +5053,12 @@ class AtlasLink {
           curTok = list.find((id) => ((((S().objects.tokens[id] || {}).resources || {}).hp || {}).current ?? 1) > 0) || list[0] || null;
         }
         const curIdx = curTok ? S().initiative.entries.findIndex((e) => e.tokenId === curTok) : -1;
+        // the turn moved on: bring that token into view
+        const turnKey = `${this.fightKey(session)}|${enc.round}|${cur ? cur.name : ""}`;
+        if (curTok && this.plugin.settings.atlasFollowTurn && (this.lastTurn || (this.lastTurn = new Map())).get(view) !== turnKey) {
+          this.lastTurn.set(view, turnKey);
+          this.centerOn(view, curTok);
+        }
         const i2 = S().initiative;
         if (!i2.isActive || i2.round !== enc.round || i2.currentIndex !== curIdx) {
           try {
@@ -5245,6 +5270,7 @@ class InitiativeSettingTab extends PluginSettingTab {
         : "Atlas VTT isn't enabled - these options do nothing until it is.",
     });
     toggle("Live-sync with open Atlas maps", "While a fight runs: initiative order, current turn, round, HP and conditions go onto the matching map tokens, and HP / conditions changed on the map come back (to character sheets too). Uses Atlas internals - if an Atlas update changes them, turn this off.", "atlasSync");
+    toggle("Center the map on whose turn it is", "When the turn moves on, the open Atlas map pans to that creature's token (the zoom stays as it is). A group's turn goes to its first standing token.", "atlasFollowTurn");
     toggle("Atlas \"Start fight\" starts Roll for Initiative", "When Atlas adds an encounter to its initiative tracker (Start fight / Add to initiative), the same fight starts here: rolled, in the sidebar and the Roll Initiative note. A single token added mid-fight joins the running fight.", "atlasStartsRoll");
     new Setting(containerEl)
       .setName("Atlas folder")
@@ -5287,7 +5313,7 @@ class InitiativeSettingTab extends PluginSettingTab {
 // Plugin
 // ---------------------------------------------------------------------------
 
-const API_VERSION = "1.8.3";
+const API_VERSION = "1.8.4";
 const TEMPLATE = "```" + BLOCK + "\nname New encounter\nparty\n2x [[Goblin Warrior]]\n```\n";
 const ENCOUNTER_TEMPLATE = "```" + ENCOUNTER_BLOCK + "\n```\n";
 

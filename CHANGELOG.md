@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.8.4
+- **The Atlas map follows the turn.** When the turn moves on, the open Atlas map pans to that creature's token; the zoom stays as it is. A group's turn goes to its first standing token. Turn it off in Settings → Atlas VTT → *Center the map on whose turn it is*.
+- **Group bar over the map:** now drawn above Atlas's own layers, so nothing can cover it. (If you installed the first 1.8.3 files, this version brings the bar.)
+- The *Atlas VTT connection status* command also shows the selected tokens and what the group bar would offer.
+
 ## 1.8.3
 - **Mark groups on the Atlas map.** Select tokens on an Atlas map (Shift-click or drag a box), and a small bar appears at the bottom of the map: **Group for initiative**. (Also in the command palette: **Atlas: group the selected tokens**.)
   - The next fight started from Atlas runs each marked group as one row (*Goblin Warrior A*, *Goblin Warrior B*…). The unmarked tokens of that creature stay one by one.

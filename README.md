@@ -40,7 +40,7 @@ An initiative tracker for [Obsidian](https://obsidian.md) that keeps the whole f
 - **Auto-end**: combat ends by itself when every enemy is down.
 - **Statblock pane**: click a monster's name to open its statblock in the sidebar. A character's name opens their character card there: the Atlas VTT card (the layout Atlas shows on Ctrl-hover), or without Atlas the compact card from One DnD Character Sheet 1.10.0+.
 - **Add box with suggestions**: type `3 gob` and press Enter to add 3 Goblins.
-- **Atlas VTT**: start fights from Atlas encounters and keep initiative, HP and conditions in sync with an open Atlas map.
+- **Atlas VTT**: start fights from Atlas encounters and keep initiative, HP and conditions in sync with an open Atlas map. When the turn moves on, the map pans to that creature's token.
 - **Game systems**: switch between D&D 5e (2024) and Cyberpunk RED in Settings.
 
 | Encounter card | Damage / heal box |
