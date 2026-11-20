@@ -4544,21 +4544,6 @@ class AtlasLink {
       const sel = selNow();
       if (sel !== lastSel) {
         lastSel = sel;
-        // whose turn it is stays selected until the turn moves on: a click on
-        // the empty map (or panning it) would clear it, so put it back
-        const keep = !sel && !this.autoSelecting && this.plugin.settings.atlasFollowTurn && this.turnSel && this.turnSel.get(view);
-        if (keep && keep.length) {
-          setTimeout(() => {
-            try {
-              const st = view.atlasStore.getState();
-              if ((st.selectedIds || []).length || this.turnSel.get(view) !== keep) return;
-              const ids = keep.filter((id) => (st.objects.tokens || {})[id]);
-              if (!ids.length || typeof st.setSelection !== "function") return;
-              this.autoSelecting = true;
-              try { st.setSelection(ids); } finally { this.autoSelecting = false; }
-            } catch (e) { /* map closed */ }
-          }, 0);
-        }
         if (rec.selTimer) clearTimeout(rec.selTimer);
         rec.selTimer = setTimeout(() => this.drawSelBar(view), 60);
       }
