@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.8.3
+- **Mark groups on the Atlas map.** Select tokens on an Atlas map (Shift-click or drag a box) and run the command **Atlas: group the selected tokens**.
+  - The next fight started from Atlas runs each marked group as one row (*Goblin Warrior A*, *Goblin Warrior B*…). The unmarked tokens of that creature stay one by one.
+  - The live sync links each group row to exactly its marked tokens, and remembers it.
+  - Also new: **Atlas: remove the selected tokens from their group** and **Atlas: select the whole group of the selected token**.
+- **"Who takes the damage?" on the map.** With an Atlas map open, the window moves to the side and lets clicks through: click a fighter's token to apply the damage or healing. A group's token hits the group's pool; in *Several targets…* mode, clicking tokens ticks them.
+
 ## 1.8.2
 - **Groups on Atlas VTT maps.** A group (army) is now linked to as many tokens of its creature on the open Atlas map as it has members. Before, the live sync left groups out.
   - The tokens get the group's initiative, so they sit and act together in Atlas's tracker. On the group's turn, its first standing token is the current one.

@@ -73,6 +73,7 @@ Large battles stay manageable: a **group** is one row for many identical creatur
 - **Auto-end** triggers when the pool hits 0.
 - **Cyberpunk RED**: one SP value for the whole group, Body / Head / Direct hits come off the pool, and Area hits each target through body SP.
 - **Atlas VTT**: a group of 5 goblins is linked to 5 goblin tokens on the open map. They share the group's initiative in Atlas's tracker, the HP pool is spread over them (goblins fall one by one), and damage on any of those tokens comes off the pool. Atlas's own tracker still shows one row per token.
+  - **Mark the groups yourself:** select tokens on the map (Shift-click, or drag a box) and run the command **Atlas: group the selected tokens**. The next fight started from Atlas runs each marked group as one row (*Goblin Warrior A*, *Goblin Warrior B*…), and the unmarked tokens of that creature one by one. Also: **Atlas: remove the selected tokens from their group** and **Atlas: select the whole group of the selected token**. Give them hotkeys to work fast.
 
 ![A group of 40 goblins in a fight](docs/screenshots/groups.png)
 
@@ -148,6 +149,8 @@ To use it:
 The likely targets come first:
 - for damage, the other side, with the attacker and anyone who's down at the bottom;
 - for healing, the healer's own side.
+
+**With an Atlas map open**, you can also just **click the token** on the map: the window moves to the side and lets clicks through, and clicking a fighter's token applies the damage (or healing) to them. A group's token hits the group's pool. In *Several targets…* mode, clicking tokens ticks them.
 
 Attack rolls, checks and initiative rolls are ignored. Turn it off under **Settings → Rolled damage and healing**.
 

@@ -158,6 +158,7 @@ Start typing and it suggests character sheets, monsters from your monster folder
 - The command **Roll initiative for an Atlas encounter** starts a fight straight from one.
 
 **Live map sync** (Settings → Atlas VTT, on by default). While a fight runs and an Atlas map is open:
+- **"Who takes the damage?"** lets clicks through to the map: click a fighter's token to apply the damage or healing to them (a group token hits the group's pool).
 - Roll for Initiative → map: initiative order, current turn, round, HP (PCs from their sheets) and conditions are mirrored onto the matching tokens.
 - Map → Roll for Initiative: HP and conditions changed on the map come back. A PC's go onto their character sheet too, with the same dying / Unconscious rules as the sheet.
 - How tokens are matched to combatants:
@@ -245,6 +246,7 @@ A group is one row for many identical creatures. They share initiative and an **
   - The group's conditions go onto every token.
   - Fewer tokens than members (40 goblins, 5 tokens): the members off the map fall first, so the tokens are the last ones standing.
   - Atlas's own tracker still lists each token on its own row, because Atlas has no groups. Run the group from Roll for Initiative.
+  - **Marking groups on the map:** select the tokens (Shift-click or a box) and run **Atlas: group the selected tokens**. Groups are stored per map, one creature per group. The next fight started from Atlas makes each marked group one row (lettered *A*, *B*… when a creature has several), and the creature's unmarked tokens stay one by one, whatever *Group automatically from* says. The live sync pairs each group row with exactly its marked tokens and remembers the pairing. **Atlas: remove the selected tokens from their group** and **Atlas: select the whole group of the selected token** go with it.
 - **Cyberpunk RED:**
   - the group shares one SP value, with no per-member ablation;
   - Body / Head / Direct hits come off the pool;

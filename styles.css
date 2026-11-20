@@ -1981,3 +1981,23 @@ button.ri-cond:hover {
 .ri-atlas-card .atlas-sb-counter__pip {
 	cursor: pointer;
 }
+
+/* "Who takes the damage?" with an Atlas map open: clicks go through to the
+   map (pick a token there), and the window sits at the side */
+.modal-container.ri-dmg-passthrough {
+	pointer-events: none;
+	justify-content: flex-end;
+	padding-right: 24px;
+}
+.modal-container.ri-dmg-passthrough .modal-bg {
+	opacity: 0.12 !important;
+}
+.modal-container.ri-dmg-passthrough .modal {
+	pointer-events: auto;
+}
+.ri-dmg-maphint {
+	margin: -2px 0 8px;
+	font-size: 0.85em;
+	color: var(--text-muted);
+	font-style: italic;
+}

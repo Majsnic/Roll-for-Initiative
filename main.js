@@ -78,6 +78,7 @@ const DEFAULT_SETTINGS = {
   autoEnd: true,
   atlasSync: true,
   atlasStartsRoll: true,
+  atlasGroups: {}, // map path -> [{ id, tokens: [tokenId…], pair }] marked on the map
   atlasFolder: "atlas-vtt",
   combatNote: "Roll Initiative.md",
   openCombatNote: true,
@@ -4161,9 +4162,20 @@ class DamageTargetModal extends Modal {
   }
   onOpen() {
     this.modalEl.addClass("ri-dmg-modal");
+    // An open Atlas map: clicking a fighter's token picks it, so the window
+    // lets clicks through to the map and moves to the side.
+    const atlas = this.plugin.atlas;
+    this.unwatch = atlas && atlas.watchSelection ? atlas.watchSelection(this.req.session, (c) => {
+      if (this.multi) {
+        if (this.picked.has(c)) this.picked.delete(c); else this.picked.add(c);
+        this.draw();
+      } else this.apply([c]);
+    }) : null;
+    if (this.unwatch) this.containerEl.addClass("ri-dmg-passthrough");
     this.draw();
   }
   onClose() {
+    if (this.unwatch) { this.unwatch(); this.unwatch = null; }
     this.contentEl.empty();
     if (this.onClosed) { const f = this.onClosed; this.onClosed = null; f(); }
   }
@@ -4179,6 +4191,7 @@ class DamageTargetModal extends Modal {
     if (from) what.push(from);
     if (req.crit) what.push("critical");
     el.createDiv({ cls: `ri-dmg-what ${req.heal ? "is-heal" : "is-damage"}`, text: what.join(" · ") });
+    if (this.unwatch) el.createDiv({ cls: "ri-dmg-maphint", text: this.multi ? "…or click their tokens on the map." : "…or click the token on the map." });
 
     const amt = el.createDiv({ cls: "ri-dmg-amount" });
     amt.createSpan({ cls: "ri-dmg-label", text: req.heal ? "Heal" : "Damage" });
@@ -4562,6 +4575,7 @@ class AtlasLink {
     const all = (st.initiative.entries || []).map((e) => e.tokenId);
     const mapName = String(st.mapPath || "").split("/").pop().replace(/\.[a-z0-9]+$/i, "");
     const spec = this.specFromTokens(toJson(all), mapName ? `Fight - ${mapName}` : "Atlas fight");
+    this.applyMarkedGroups(view, spec, all);
     if (!spec.players.length && !spec.creatures.length) return;
     await this.plugin.startEncounter(spec, "");
   }
@@ -4598,6 +4612,128 @@ class AtlasLink {
     return `${session.sourcePath}#${session.enc.id}`;
   }
 
+  // ---- picking a creature by clicking its token ----
+
+  /** The fighter (single or group) a token on this map belongs to. */
+  combatantOfToken(view, session, tokenId) {
+    const map = this.mapping(view, session);
+    for (const [name, id] of map) if (id === tokenId) return session.enc.combatants.find((c) => c.name === name) || null;
+    for (const [name, list] of map.groups) if (list.includes(tokenId)) return session.enc.combatants.find((c) => c.name === name) || null;
+    return null;
+  }
+  /** Call `onPick(combatant)` whenever a fighter's token gets clicked
+   *  (selected) on an open map. Returns the unsubscribe function. */
+  watchSelection(session, onPick) {
+    if (!this.plugin.settings.atlasSync || !this.installed || !session) return null;
+    const subs = [];
+    for (const view of this.mapViews()) {
+      const store = view.atlasStore;
+      let before = (store.getState().selectedIds || []).slice();
+      subs.push(store.subscribe(() => {
+        const now = store.getState().selectedIds || [];
+        const was = before;
+        before = now.slice();
+        if (now.length !== 1 || (was.length === 1 && was[0] === now[0])) return;
+        const c = this.combatantOfToken(view, session, now[0]);
+        if (c) onPick(c);
+      }));
+    }
+    if (!subs.length) return null;
+    return () => { for (const u of subs) { try { u(); } catch (e) { /* map gone */ } } };
+  }
+
+  // ---- groups marked on the map ----
+
+  mapPathOf(view) {
+    try { return String(view.atlasStore.getState().mapPath || ""); } catch (e) { return ""; }
+  }
+  /** Token groups marked on this map, without tokens that are gone. */
+  markedGroups(view) {
+    const all = this.plugin.settings.atlasGroups || (this.plugin.settings.atlasGroups = {});
+    const key = this.mapPathOf(view);
+    const tokens = (view.atlasStore.getState().objects || {}).tokens || {};
+    const list = (all[key] || []).map((g) => ({ ...g, tokens: g.tokens.filter((id) => tokens[id]) })).filter((g) => g.tokens.length > 1);
+    return list;
+  }
+  saveMarkedGroups(view, list) {
+    const all = this.plugin.settings.atlasGroups || (this.plugin.settings.atlasGroups = {});
+    const key = this.mapPathOf(view);
+    if (list.length) all[key] = list; else delete all[key];
+    this.plugin.saveSettings();
+  }
+  /** The map whose selection a command works on: the focused one, else one with a selection. */
+  selectionView() {
+    const views = this.mapViews();
+    const active = this.app.workspace.activeLeaf && this.app.workspace.activeLeaf.view;
+    if (views.includes(active)) return active;
+    return views.find((v) => ((v.atlasStore.getState().selectedIds) || []).length) || views[0] || null;
+  }
+  /** Command: the selected tokens become one group for Roll for Initiative. */
+  groupSelected() {
+    const view = this.selectionView();
+    if (!view) { new Notice("Open an Atlas map first."); return false; }
+    const st = view.atlasStore.getState();
+    const ids = (st.selectedIds || []).filter((id) => st.objects.tokens[id] && st.objects.tokens[id].kind === "character");
+    if (ids.length < 2) { new Notice("Select two or more tokens on the Atlas map first (Shift-click, or drag a box around them)."); return false; }
+    const norm = (p) => String(p || "").trim().toLowerCase();
+    const paths = new Set(ids.map((id) => norm(st.objects.tokens[id].statblockPath)));
+    if (paths.size !== 1 || paths.has("")) { new Notice("A group is one kind of creature: select tokens that share one statblock."); return false; }
+    const list = this.markedGroups(view).map((g) => ({ ...g, tokens: g.tokens.filter((id) => !ids.includes(id)) })).filter((g) => g.tokens.length > 1);
+    list.push({ id: randomId(), tokens: ids });
+    this.saveMarkedGroups(view, list);
+    const name = String(st.objects.tokens[ids[0]].name || "creature");
+    new Notice(`${ids.length}× ${name}: one group for Roll for Initiative. The next fight started from Atlas runs them as one row.`);
+    return true;
+  }
+  /** Command: the selected tokens leave their group. */
+  ungroupSelected() {
+    const view = this.selectionView();
+    if (!view) { new Notice("Open an Atlas map first."); return false; }
+    const ids = view.atlasStore.getState().selectedIds || [];
+    const before = this.markedGroups(view);
+    const list = before.map((g) => ({ ...g, tokens: g.tokens.filter((id) => !ids.includes(id)) })).filter((g) => g.tokens.length > 1);
+    const changed = JSON.stringify(list) !== JSON.stringify(before);
+    if (!changed) { new Notice("None of the selected tokens are in a group."); return false; }
+    this.saveMarkedGroups(view, list);
+    new Notice("Selected tokens removed from their group.");
+    return true;
+  }
+  /** Command: select every token of the group the selected token belongs to. */
+  selectGroupOfSelected() {
+    const view = this.selectionView();
+    if (!view) return false;
+    const st = view.atlasStore.getState();
+    const id = (st.selectedIds || [])[0];
+    const g = id && this.markedGroups(view).find((x) => x.tokens.includes(id));
+    if (!g) { new Notice("That token isn't in a group."); return false; }
+    if (typeof st.setSelection === "function") st.setSelection(g.tokens);
+    return true;
+  }
+  /** A fight started from Atlas: marked groups become one group row each; the
+   *  other tokens of those creatures stay one by one. */
+  applyMarkedGroups(view, spec, tokenIds) {
+    const marks = this.markedGroups(view);
+    if (!marks.length) return spec;
+    const tokens = view.atlasStore.getState().objects.tokens || {};
+    const mc = this.app.metadataCache;
+    for (const g of marks) {
+      const ids = g.tokens.filter((id) => tokenIds.includes(id));
+      if (ids.length < 2) continue;
+      const sb = tokens[ids[0]].statblockPath;
+      const f = sb && this.app.vault.getAbstractFileByPath(obsidian.normalizePath ? obsidian.normalizePath(sb) : sb);
+      if (!(f instanceof TFile)) continue;
+      const link = mc.fileToLinktext(f, "", true);
+      const entry = spec.creatures.find((c) => c.link === link && !c.marked);
+      if (!entry) continue;
+      entry.count -= ids.length;
+      entry.group = false; // the rest of this creature: one by one
+      spec.creatures.push({ count: ids.length, name: f.basename, link, isLink: true, group: ids.length, marked: true });
+    }
+    spec.creatures = spec.creatures.filter((c) => c.count > 0);
+    for (const c of spec.creatures) delete c.marked;
+    return spec;
+  }
+
   /** Pair combatants with tokens on this map (kept stable once paired). */
   mapping(view, session) {
     const rec = this.views.get(view);
@@ -4622,14 +4758,35 @@ class AtlasLink {
     const norm = (s) => String(s || "").trim().toLowerCase();
     const samePath = (a, b) => !!a && !!b && norm(decodeURIComponent(a)) === norm(decodeURIComponent(b));
     const sheets = this.plugin.combatantIndex().filter((x) => x.pc);
-    // A group row takes as many tokens of its creature as it has members.
+    // A group row takes as many tokens of its creature as it has members:
+    // a group marked on the map first, else any free tokens of that creature.
+    const marks = this.markedGroups(view);
+    const marked = new Set(marks.flatMap((g) => g.tokens));
+    let pairsChanged = false;
+    for (const c of session.enc.combatants) {
+      if (!session.isGroup(c) || (gmap.get(c.name) || []).length) continue;
+      const r = session.r(c);
+      if (!r.path) continue;
+      const pairKey = `${this.fightKey(session)}|${c.name}`;
+      const fits = (g) => g.tokens.every((id) => free.some((t) => t.id === id)) && samePath(tokens[g.tokens[0]].statblockPath, r.path);
+      const g = marks.find((x) => x.pair === pairKey && fits(x)) || marks.find((x) => !x.pair && fits(x) && x.tokens.length === c.group) || marks.find((x) => !x.pair && fits(x));
+      if (!g) continue;
+      gmap.set(c.name, g.tokens.slice(0, c.group).map((id) => take(free.find((t) => t.id === id))));
+      if (g.pair !== pairKey) {
+        const all = this.plugin.settings.atlasGroups[this.mapPathOf(view)] || [];
+        const saved = all.find((x) => x.id === g.id);
+        if (saved) { saved.pair = pairKey; pairsChanged = true; }
+      }
+    }
+    if (pairsChanged) this.plugin.saveSettings();
     for (const c of session.enc.combatants) {
       if (!session.isGroup(c)) continue;
       const r = session.r(c);
       if (!r.path) continue;
       const list = gmap.get(c.name) || [];
       const base = norm(c.name.replace(/\s+\d+$/, ""));
-      const cands = free.filter((t) => samePath(t.statblockPath, r.path))
+      if (list.length && marks.some((g) => g.tokens.includes(list[0]))) continue; // a marked group stays as marked
+      const cands = free.filter((t) => samePath(t.statblockPath, r.path) && !marked.has(t.id))
         .sort((a, b) => (norm(a.name).startsWith(base) ? 0 : 1) - (norm(b.name).startsWith(base) ? 0 : 1) || String(a.name).localeCompare(String(b.name), undefined, { numeric: true }) || String(a.id).localeCompare(String(b.id)));
       while (list.length < c.group && cands.length) list.push(take(cands.shift()));
       gmap.set(c.name, list);
@@ -4640,7 +4797,7 @@ class AtlasLink {
       const r = session.r(c);
       let tok = null;
       if (r.kind === "creature" && r.path) {
-        const cands = free.filter((t) => samePath(t.statblockPath, r.path));
+        const cands = free.filter((t) => samePath(t.statblockPath, r.path) && !marked.has(t.id));
         tok = cands.find((t) => norm(t.name) === norm(c.name)) || cands[0] || null;
       } else if (r.kind === "sheet") {
         // the token's statblock is this character's Atlas.md (sheet 1.8+), else match by name / image
@@ -5048,7 +5205,7 @@ class InitiativeSettingTab extends PluginSettingTab {
 // Plugin
 // ---------------------------------------------------------------------------
 
-const API_VERSION = "1.8.2";
+const API_VERSION = "1.8.3";
 const TEMPLATE = "```" + BLOCK + "\nname New encounter\nparty\n2x [[Goblin Warrior]]\n```\n";
 const ENCOUNTER_TEMPLATE = "```" + ENCOUNTER_BLOCK + "\n```\n";
 
@@ -5103,6 +5260,21 @@ class RollInitiativePlugin extends Plugin {
         this.runFirstBlockOf(file);
         return true;
       },
+    });
+    this.addCommand({
+      id: "atlas-group-selected",
+      name: "Atlas: group the selected tokens (one initiative row)",
+      callback: () => this.atlas.groupSelected(),
+    });
+    this.addCommand({
+      id: "atlas-ungroup-selected",
+      name: "Atlas: remove the selected tokens from their group",
+      callback: () => this.atlas.ungroupSelected(),
+    });
+    this.addCommand({
+      id: "atlas-select-group",
+      name: "Atlas: select the whole group of the selected token",
+      callback: () => this.atlas.selectGroupOfSelected(),
     });
     this.addCommand({
       id: "start-atlas-encounter",
@@ -5850,6 +6022,15 @@ class RollInitiativePlugin extends Plugin {
   encounterLines(plan) {
     const lines = [];
     for (const p of plan.players) lines.push(p.link ? `[[${p.link}]] player` : `${p.name} player`);
+    // The same creature grouped in more than one entry (groups marked on an
+    // Atlas map): letter the group rows, so each row has its own name.
+    const groupEntries = new Map();
+    for (const c of plan.creatures) {
+      const n = c._n !== undefined ? c._n : c.count;
+      if (n && this.groupingOf(c, n)) groupEntries.set(c.name, (groupEntries.get(c.name) || 0) + 1);
+    }
+    const letters = new Map();
+    const letter = (name) => { const k = letters.get(name) || 0; letters.set(name, k + 1); return String.fromCharCode(65 + (k % 26)) + (k >= 26 ? Math.floor(k / 26) + 1 : ""); };
     for (const c of plan.creatures) {
       const n = c._n !== undefined ? c._n : c.countDice ? rollDice(c.countDice) || 1 : c.count;
       if (!n) continue;
@@ -5860,7 +6041,7 @@ class RollInitiativePlugin extends Plugin {
         const chunks = groupChunks(n, grouping);
         const sb = c.stats || {};
         chunks.forEach((size, idx) => {
-          const name = chunks.length > 1 ? `${c.name} ${idx + 1}` : c.name;
+          const name = groupEntries.get(c.name) > 1 ? `${c.name} ${letter(c.name)}` : chunks.length > 1 ? `${c.name} ${idx + 1}` : c.name;
           const parts = [];
           if (!c.link || name !== base) parts.push(name);
           if (c.link) parts.push(`[[${c.link}]]`);
@@ -6259,7 +6440,7 @@ module.exports._internals = {
   parseCombatantLine, parseBlock, serializeBlock, serializeCombatant, sortCombatants, stepTurn,
   tickDurations, rollDice, extractStatblock, looseYaml, statsFromCreature, xpForCr, normalizeCr,
   difficulty, sheetApplyDamage, sheetApplyHeal, sheetDeathSave, damageMonster, healMonster,
-  findBlock, concentrationDc, Session, SheetBridge, CreatureResolver, StatblockView, setAtlasCounter, spreadGroupHp,
+  findBlock, concentrationDc, Session, SheetBridge, CreatureResolver, StatblockView, setAtlasCounter, spreadGroupHp, DamageTargetModal,
   parseEncounterCreature, parseEncounterSpec, isNpcNote, quoteLinks, serializeEncounterSpec, difficultyWord,
   atlasEncounterToSpec, matchSheet, imageBaseName, AtlasLink,
   SYSTEMS, CyberBridge, cpredHit, cpredWoundConditions, cpredDeathSave, statsFromCyberpunk, cpredInitMod,
