@@ -192,7 +192,7 @@ Settings → Roll for Initiative → **Game system** switches the rules the plug
 - Adding a Critical Injury condition (a `type: condition` note whose `quality` is *Critical Injury (Head/Body)*) also deals 5 bonus damage to HP and applies `death_save_penalty_base`.
 - A hit on someone already Mortally Wounded adds +1 to their Death Save penalty.
 - Conditions offered = every `type: condition` note in the vault.
-- Works with the **Cyberpunk RED Character Sheet** plugin: writes go to the note's properties (`hp` stays the max) and fire `cpr-sheet:refresh`, so the sheet redraws at once.
+- Works with the **Edgerunner Character Sheet** plugin: writes go to the note's properties (`hp` stays the max) and fire `cpr-sheet:refresh`, so the sheet redraws at once.
 - A Mortally Wounded creature gets a **Death Save** button. It rolls 1d10 + penalty against BODY; a 10 always fails, and each success adds +1 to the penalty.
 - Encounter cards show SP instead of AC and Threat instead of CR. They have no difficulty badge and no Roll for HP.
 - `party` uses everyone in the Players folder ("Crew").
