@@ -4544,6 +4544,21 @@ class AtlasLink {
       const sel = selNow();
       if (sel !== lastSel) {
         lastSel = sel;
+        // whose turn it is stays selected until the turn moves on: a click on
+        // the empty map (or panning it) would clear it, so put it back
+        const keep = !sel && !this.autoSelecting && this.plugin.settings.atlasFollowTurn && this.turnSel && this.turnSel.get(view);
+        if (keep && keep.length) {
+          setTimeout(() => {
+            try {
+              const st = view.atlasStore.getState();
+              if ((st.selectedIds || []).length || this.turnSel.get(view) !== keep) return;
+              const ids = keep.filter((id) => (st.objects.tokens || {})[id]);
+              if (!ids.length || typeof st.setSelection !== "function") return;
+              this.autoSelecting = true;
+              try { st.setSelection(ids); } finally { this.autoSelecting = false; }
+            } catch (e) { /* map closed */ }
+          }, 0);
+        }
         if (rec.selTimer) clearTimeout(rec.selTimer);
         rec.selTimer = setTimeout(() => this.drawSelBar(view), 60);
       }
@@ -4950,6 +4965,7 @@ class AtlasLink {
     // a group marked on the map first, else any free tokens of that creature.
     const marks = this.markedGroups(view);
     const marked = new Set(marks.flatMap((g) => g.tokens));
+    const liveFights = new Set([this.fightKey(session), ...this.plugin.linkState().fights.filter((r) => r && r.path).map((r) => `${r.path}#${r.id || ""}`)]);
     let pairsChanged = false;
     for (const c of session.enc.combatants) {
       if (!session.isGroup(c) || (gmap.get(c.name) || []).length) continue;
@@ -4957,7 +4973,14 @@ class AtlasLink {
       if (!r.path) continue;
       const pairKey = `${this.fightKey(session)}|${c.name}`;
       const fits = (g) => g.tokens.every((id) => free.some((t) => t.id === id)) && samePath(tokens[g.tokens[0]].statblockPath, r.path);
-      const g = marks.find((x) => x.pair === pairKey && fits(x)) || marks.find((x) => !x.pair && fits(x) && x.tokens.length === c.group) || marks.find((x) => !x.pair && fits(x));
+      // A mark paired with a fight that's over (each new fight gets a new id)
+      // is free again; one that had this row's name / size is preferred.
+      const rowOf = (x) => String(x.pair || "").slice(String(x.pair || "").lastIndexOf("|") + 1);
+      const open = (x) => !x.pair || !liveFights.has(String(x.pair).slice(0, String(x.pair).lastIndexOf("|")));
+      const g = marks.find((x) => x.pair === pairKey && fits(x))
+        || marks.find((x) => open(x) && fits(x) && rowOf(x) === c.name && x.tokens.length === c.group)
+        || marks.find((x) => open(x) && fits(x) && x.tokens.length === c.group)
+        || marks.find((x) => open(x) && fits(x));
       if (!g) continue;
       gmap.set(c.name, g.tokens.slice(0, c.group).map((id) => take(free.find((t) => t.id === id))));
       if (g.pair !== pairKey) {
@@ -5023,7 +5046,7 @@ class AtlasLink {
     this.busy = true;
     try {
       const session = await this.plugin.syncSession();
-      if (!session) { if (this.liveFight) this.liveFight.clear(); for (const v of views) this.drawSelBar(v); return; }
+      if (!session) { if (this.liveFight) this.liveFight.clear(); if (this.turnSel) this.turnSel.clear(); for (const v of views) this.drawSelBar(v); return; }
       const ids = await this.loadConditionIds();
       for (const v of views) { this.push(v, session, ids); this.drawSelBar(v); }
     } catch (e) {
@@ -5108,6 +5131,7 @@ class AtlasLink {
       const enc = session.enc;
       const ini = S().initiative;
       if (!ini || !Array.isArray(ini.entries)) return;
+      if (!session.isRunning() && this.turnSel) this.turnSel.delete(view);
       if (session.isRunning()) {
         const tokensOf = (c) => (map.has(c.name) ? [map.get(c.name)] : (map.groups.get(c.name) || []));
         const ordered = enc.combatants.filter((c) => tokensOf(c).length && !c.off);
@@ -5139,6 +5163,7 @@ class AtlasLink {
           if (from >= 0 && from !== i && typeof S().reorderInitiative === "function") S().reorderInitiative(from, i);
         });
         const cur = enc.combatants.find((c) => c.current);
+        if ((!cur || !session.isRunning()) && this.turnSel) this.turnSel.delete(view);
         // a group's turn: its first token still standing (else its first token)
         let curTok = null;
         if (cur) {
@@ -5154,6 +5179,7 @@ class AtlasLink {
           const all = tokensOf(cur);
           const standing = all.filter((id) => S().objects.tokens[id] && ((((S().objects.tokens[id] || {}).resources || {}).hp || {}).current ?? 1) > 0);
           const pick = standing.length ? standing : [curTok];
+          (this.turnSel || (this.turnSel = new Map())).set(view, pick);
           if (typeof S().setSelection === "function") {
             this.autoSelecting = true;
             try { S().setSelection(pick); } catch (e) { /* older Atlas */ } finally { this.autoSelecting = false; }
