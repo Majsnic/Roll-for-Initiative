@@ -2005,11 +2005,11 @@ button.ri-cond:hover {
 /* Our floating bar over an Atlas map (Roll for Initiative's, not Atlas's):
    group the tokens selected there */
 .ri-atlas-selbar {
-	position: absolute;
+	position: fixed;
 	left: 50%;
 	bottom: 72px;
 	transform: translateX(-50%);
-	z-index: 30;
+	z-index: var(--layer-popover, 30);
 	display: flex;
 	align-items: center;
 	gap: 8px;

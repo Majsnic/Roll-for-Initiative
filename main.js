@@ -4747,11 +4747,22 @@ class AtlasLink {
     try { info = this.selectionInfo(view); } catch (e) { info = null; }
     if (!info) { if (bar) bar.addClass("ri-hidden"); return; }
     if (!bar) {
-      bar = host.createDiv({ cls: "ri-atlas-selbar" });
+      // In the window's body, over everything (Atlas's own layers can't cover it),
+      // placed over the bottom of the map.
+      const body = host.ownerDocument.body;
+      bar = body && body.createDiv ? body.createDiv({ cls: "ri-atlas-selbar" }) : host.createDiv({ cls: "ri-atlas-selbar" });
       if (!this.selBars) this.selBars = new Map();
       this.selBars.set(view, bar);
     }
     bar.removeClass("ri-hidden");
+    try {
+      const r = (view.contentEl || host).getBoundingClientRect();
+      const win = host.ownerDocument.defaultView;
+      if (r && r.width && win) {
+        bar.style.left = `${Math.round(r.left + r.width / 2)}px`;
+        bar.style.bottom = `${Math.round(win.innerHeight - r.bottom + 72)}px`;
+      }
+    } catch (e) { /* keep the CSS default */ }
     bar.empty();
     const icon = bar.createSpan({ cls: "ri-atlas-selbar-icon" });
     setIcon(icon, "users");
@@ -5363,7 +5374,10 @@ class RollInitiativePlugin extends Plugin {
           `Open Atlas maps: ${views.length} (watching ${this.atlas.views.size})`,
           ...views.map((v) => {
             const st = v.atlasStore.getState();
-            return `· ${String(st.mapPath || "map").split("/").pop()}: ${Object.keys(st.objects.tokens || {}).length} tokens, ${(st.initiative.entries || []).length} in Atlas initiative`;
+            const sel = st.selectedIds || [];
+            const toks = st.objects.tokens || {};
+            const info = (() => { try { return this.atlas.selectionInfo(v); } catch (e) { return { text: `error: ${e.message}` }; } })();
+            return `· ${String(st.mapPath || "map").split("/").pop()}: ${Object.keys(toks).length} tokens, ${(st.initiative.entries || []).length} in Atlas initiative, ${sel.length} selected (${sel.map((id) => (toks[id] || {}).kind || "?").join(", ")}), ${this.atlas.markedGroups(v).length} marked groups. Group bar: ${info ? info.text : "nothing to show"}`;
           }),
         ];
         new Notice(lines.join("\n"), 12000);
