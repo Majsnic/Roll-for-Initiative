@@ -211,7 +211,7 @@ To update, replace the three files with the ones from the new release.
 | [Fantasy Statblocks](https://github.com/valentine195/obsidian-5e-statblocks) | Monster statblocks: the stat source and the statblock pane |
 | [TTRPG Tools: Player Screen](https://github.com/jareika/ttrpg-tools-screen) | The players' second screen (turn order without HP numbers or AC) |
 | [One DnD Character Sheet](https://github.com/Majsnic/OneDnD-Character-sheet) | Live D&D 2024 player sheets (HP, conditions, death saves). [Video](https://youtu.be/ExLmbPfUDAM) |
-| [Edgerunner Character Sheet](https://github.com/Majsnic/Endgerunner-Character-Sheet) | Live Cyberpunk RED player sheets |
+| [Edgerunner Character Sheet](https://github.com/Majsnic/Edgerunner-Character-Sheet) | Live Cyberpunk RED player sheets |
 | [Atlas VTT](https://github.com/atlas-vtt/atlas-vtt) | Battle maps; encounters, live token sync, and characters' Atlas cards in the statblock pane |
 
 None of them is required. Without them, type HP and AC into the block yourself.
@@ -431,7 +431,7 @@ Roll for Initiative stands on the shoulders of these projects. Thank you to thei
 - **[Initiative Tracker Plus](https://github.com/msweat254)** by **Mike** (msweat254), a community fork of Initiative Tracker, inspired the encounter card's behaviour.
 - **[Fantasy Statblocks](https://github.com/valentine195/obsidian-5e-statblocks)** by **Jeremy Valentine** renders the statblock pane and supplies the bestiary.
 - **[Atlas VTT](https://github.com/atlas-vtt/atlas-vtt)** by **[Fabian Urbanek](https://github.com/ByteMirror)** is the battle-map plugin the live sync talks to. **[Connect for Atlas VTT](https://github.com/evolJoaoBento)** by *Bento's Grimoire of Things* showed how to reach an open Atlas map.
-- **[One DnD Character Sheet](https://github.com/Majsnic/OneDnD-Character-sheet)** and **[Edgerunner Character Sheet](https://github.com/Majsnic/Endgerunner-Character-Sheet)** are companion plugins by the same author as this one.
+- **[One DnD Character Sheet](https://github.com/Majsnic/OneDnD-Character-sheet)** and **[Edgerunner Character Sheet](https://github.com/Majsnic/Edgerunner-Character-Sheet)** are companion plugins by the same author as this one.
 
 The full list, with licences, is in [CREDITS.md](CREDITS.md).
 
