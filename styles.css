@@ -2103,11 +2103,12 @@ button.ri-cond:hover {
 	border: 3px solid var(--color-yellow, #e0ac00);
 	box-shadow: 0 0 10px 3px rgba(224, 172, 0, 0.75), inset 0 0 8px 1px rgba(224, 172, 0, 0.5);
 	pointer-events: none;
-	animation: ri-turn-pulse 1.6s ease-in-out infinite;
+	animation: ri-turn-glow 1.8s ease-in-out infinite;
 }
-@keyframes ri-turn-pulse {
-	0%, 100% { opacity: 1; }
-	50% { opacity: 0.55; }
+/* the ring itself stays; only its glow breathes a little */
+@keyframes ri-turn-glow {
+	0%, 100% { box-shadow: 0 0 10px 3px rgba(224, 172, 0, 0.8), inset 0 0 8px 1px rgba(224, 172, 0, 0.5); }
+	50% { box-shadow: 0 0 5px 1px rgba(224, 172, 0, 0.55), inset 0 0 4px 1px rgba(224, 172, 0, 0.35); }
 }
 @media (prefers-reduced-motion: reduce) {
 	.ri-turn-ring { animation: none; }

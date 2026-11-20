@@ -1,13 +1,16 @@
 # Changelog
 
 ## 1.8.3
+- **Fights from the Atlas map, in Roll for Initiative's own tracker.** Select tokens on the map (Shift-click or drag a box) and press **Roll initiative** on the bar at the bottom of the map. A marked group comes in whole. While a fight runs, selected tokens that aren't in it get **Add to fight**. (Command: *Atlas: roll initiative for the selected tokens*.)
+  - The fight runs in Roll for Initiative only; Atlas's own initiative tracker is left alone. HP and conditions still sync to the tokens, and the fight stays linked to exactly the tokens you picked.
+  - Settings → Atlas VTT → *Use Atlas's initiative tracker too* (off by default) writes the order, turn and round into Atlas's tracker as before.
 - **Mark groups on the Atlas map.** Select tokens on an Atlas map (Shift-click or drag a box), and a small bar appears at the bottom of the map: **Group for initiative**. (Also in the command palette: **Atlas: group the selected tokens**.)
   - The next fight started from Atlas runs each marked group as one row (*Goblin Warrior A*, *Goblin Warrior B*…). The unmarked tokens of that creature stay one by one.
   - The live sync links each group row to exactly its marked tokens, and remembers it.
   - Marked groups carry over to the next fight on that map: they don't have to be marked again.
   - Select one grouped token, and the bar offers **Select group** and **Remove from group**; select a whole group, and it offers **Ungroup**.
   - The bar is Roll for Initiative's own, drawn over the map above Atlas's layers. Atlas itself isn't changed.
-- **Whose turn it is, marked on the Atlas map.** A glowing ring sits around the token whose turn it is; on a group's turn, around every standing token of the group, so you can see which tokens to move. The rings stay for the whole turn, and the tokens can still be selected, moved and used one by one. Settings → Atlas VTT → *Mark whose turn it is*.
+- **Whose turn it is, marked on the Atlas map.** A yellow ring sits around the token whose turn it is; on a group's turn, around every standing token of the group, so you can see which tokens to move. The rings stay for the whole turn, and the tokens can still be selected, moved and used one by one. Settings → Atlas VTT → *Mark whose turn it is*.
 - **The Atlas map follows the turn.** When the turn moves on, the open map pans to that creature's token, or to the middle of a group's tokens; the zoom stays as it is. Settings → Atlas VTT → *Center the map on whose turn it is*.
 - **"Who takes the damage?" for Atlas rolls.** Damage and healing rolled in Atlas itself (from a monster's statblock or a character's card on the map) now open the window too, like Dice Roller rolls. Attack rolls and checks (d20) don't.
 - **"Who takes the damage?" on the map.** With an Atlas map open, the window moves to the side and lets clicks through: click a fighter's token to apply the damage or healing. A group's token hits the group's pool; in *Several targets…* mode, clicking tokens ticks them.

@@ -157,6 +157,8 @@ Start typing and it suggests character sheets, monsters from your monster folder
   - character tokens are matched to your character sheets by name, first name or token image.
 - The command **Roll initiative for an Atlas encounter** starts a fight straight from one.
 
+**Fights from the map:** select tokens on an Atlas map (Shift-click or a box) and press **Roll initiative** on the bar at the bottom of the map (or run *Atlas: roll initiative for the selected tokens*). A marked group comes in whole. The fight runs in Roll for Initiative only and stays linked to exactly the tokens you picked; Atlas's own initiative tracker isn't used unless *Use Atlas's initiative tracker too* is on. While a fight runs, selected tokens that aren't in it get **Add to fight**.
+
 **Live map sync** (Settings → Atlas VTT, on by default). While a fight runs and an Atlas map is open:
 - **Whose turn it is:** a glowing ring around that creature's token, or around every standing token of a group, for the whole turn. It's Roll for Initiative's own mark drawn over the map: clicks go through, so the tokens can still be selected and moved one by one. Settings → Atlas VTT → *Mark whose turn it is*.
 - **The map follows the turn:** when the turn moves on, the open map pans to that creature's token, or the middle of a group's tokens (the zoom stays). Settings → Atlas VTT → *Center the map on whose turn it is*.

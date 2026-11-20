@@ -80,6 +80,7 @@ const DEFAULT_SETTINGS = {
   atlasStartsRoll: true,
   atlasGroups: {}, // map path -> [{ id, tokens: [tokenId…], pair }] marked on the map
   atlasFollowTurn: true, // center the open Atlas map on whose turn it is
+  atlasTracker: false, // also fill Atlas's own initiative tracker
   atlasTurnRing: true, // ring around whose turn it is (all of a group's tokens) on the map
   atlasFolder: "atlas-vtt",
   combatNote: "Roll Initiative.md",
@@ -4495,6 +4496,8 @@ class AtlasLink {
     const p = this.plugin;
     p.registerInterval(window.setInterval(() => this.tick(), 1500));
     p.registerEvent(this.app.workspace.on("layout-change", () => this.tick()));
+    // the bar belongs to its map: hide it while another tab is shown
+    p.registerEvent(this.app.workspace.on("active-leaf-change", () => { for (const v of this.views.keys()) this.drawSelBar(v); }));
     p.registerEvent(this.app.workspace.on("roll-initiative:change", () => this.tick()));
     p.register(() => this.detachAll());
   }
@@ -4548,7 +4551,13 @@ class AtlasLink {
     for (const [v] of [...this.rings]) this.setTurnRing(v, null);
   }
   ringCanvas(view) {
-    const host = view.contentEl || view.containerEl;
+    try {
+      const svc = view.serviceManager && view.serviceManager.getRendererService && view.serviceManager.getRendererService();
+      const a = svc && svc.getApp && svc.getApp();
+      const c = a && (a.canvas || a.view);
+      if (c && c.isConnected !== false && c.getBoundingClientRect) return c;
+    } catch (e) { /* fall back to looking for it */ }
+    const host = view.containerEl || view.contentEl;
     if (!host || !host.querySelectorAll) return null;
     let best = null, area = 0;
     for (const c of host.querySelectorAll("canvas")) {
@@ -4660,6 +4669,47 @@ class AtlasLink {
       this.pullTimer = setTimeout(() => this.pull(view), 200);
     });
     this.views.set(view, rec);
+  }
+
+  /** The bar's / command's "Roll initiative": a new fight from the tokens
+   *  selected on the map (Atlas's own tracker isn't used), or, while a fight
+   *  runs, those tokens join it. */
+  async fightFromSelection(view = this.selectionView()) {
+    if (!view) { new Notice("Open an Atlas map first."); return false; }
+    const st = view.atlasStore.getState();
+    const tokens = st.objects.tokens || {};
+    let ids = (st.selectedIds || []).filter((id) => tokens[id] && tokens[id].kind === "character");
+    if (!ids.length) { new Notice("Select the tokens for the fight on the map first (Shift-click, or drag a box around them)."); return false; }
+    // a marked group comes in whole, even when only part of it is selected
+    for (const g of this.markedGroups(view)) if (g.tokens.some((id) => ids.includes(id))) for (const id of g.tokens) if (tokens[id] && !ids.includes(id)) ids.push(id);
+    const toJson = (list) => list.map((id) => tokens[id]).filter(Boolean).map((t) => ({
+      name: t.name, imagePath: t.imagePath, statblockPath: t.statblockPath,
+      state: { name: t.name, imagePath: t.imagePath, statblockPath: t.statblockPath },
+    }));
+    const session = await this.plugin.syncSession();
+    if (session && session.isRunning()) {
+      const map = this.mapping(view, session);
+      const mapped = new Set([...map.values(), ...[...map.groups.values()].flat()]);
+      const fresh = ids.filter((id) => !mapped.has(id));
+      if (!fresh.length) { new Notice("Those tokens are already in the fight."); return false; }
+      const spec = this.specFromTokens(toJson(fresh), "");
+      this.applyMarkedGroups(view, spec, fresh);
+      const FT = this.plugin.settings.atlasFightTokens || (this.plugin.settings.atlasFightTokens = {});
+      const fk = this.fightKey(session);
+      if (Array.isArray(FT[fk])) { FT[fk] = [...new Set([...FT[fk], ...fresh])]; this.plugin.saveSettings(); }
+      const lines = await this.plugin.planLines(await this.plugin.resolveEncounter(spec, session.sourcePath), session.sourcePath);
+      for (const l of lines) await session.addFromText(l);
+      new Notice(`${fresh.length} token${fresh.length === 1 ? "" : "s"} joined the fight`);
+      this.drawSelBar(view);
+      return true;
+    }
+    const mapName = String(st.mapPath || "").split("/").pop().replace(/\.[a-z0-9]+$/i, "");
+    const spec = this.specFromTokens(toJson(ids), mapName ? `Fight - ${mapName}` : "Atlas fight");
+    this.applyMarkedGroups(view, spec, ids);
+    if (!spec.players.length && !spec.creatures.length) return false;
+    this.pendingFight = { view, ids: ids.slice(), at: Date.now() };
+    await this.plugin.startEncounter(spec, "");
+    return true;
   }
 
   /** Tokens Atlas just added to its own initiative tracker. */
@@ -4879,10 +4929,30 @@ class AtlasLink {
     const g = groupOf(ids[0]);
     const wholeGroup = !!g && ids.length === g.tokens.length && ids.every((id) => g.tokens.includes(id));
     const inGroups = ids.some(groupOf);
-    if (ids.length === 1) return g ? { kind: "member", text: `${name}: in a group of ${g.tokens.length}`, group: g } : null;
+    if (ids.length === 1) return g ? { kind: "member", text: `${name}: in a group of ${g.tokens.length}`, group: g } : { kind: "one", text: String(toks[ids[0]].name || "token") };
     if (wholeGroup) return { kind: "group", text: `Group of ${g.tokens.length}× ${name}` };
     if (!same) return { kind: "mixed", text: `${ids.length} tokens: a group is one kind of creature`, inGroups };
     return { kind: "can", text: `${ids.length}× ${name} selected`, inGroups };
+  }
+  selectedCount(view) {
+    const st = view.atlasStore.getState();
+    const toks = (st.objects && st.objects.tokens) || {};
+    const ids = new Set((st.selectedIds || []).filter((id) => toks[id] && toks[id].kind === "character"));
+    // a marked group comes into the fight whole
+    for (const g of this.markedGroups(view)) if (g.tokens.some((id) => ids.has(id))) for (const id of g.tokens) if (toks[id]) ids.add(id);
+    return ids.size;
+  }
+  selectedOutsideFight(view, session) {
+    const st = view.atlasStore.getState();
+    const toks = (st.objects && st.objects.tokens) || {};
+    let n = 0;
+    for (const id of st.selectedIds || []) {
+      if (!toks[id] || toks[id].kind !== "character") continue;
+      let c = null;
+      try { c = this.combatantOfToken(view, session, id); } catch (e) { c = null; }
+      if (!c) n++;
+    }
+    return n;
   }
   /** The fighters of the running fight behind the tokens selected on a map
    *  (a group counts once, however many of its tokens are selected). */
@@ -4922,10 +4992,15 @@ class AtlasLink {
     try { info = this.selectionInfo(view); } catch (e) { info = null; }
     let fighters = [];
     try { fighters = this.selectedFighters(view); } catch (e) { fighters = []; }
+    try {
+      const vr = (view.contentEl || host).getBoundingClientRect();
+      if (info && (!vr || !vr.width || !vr.height)) info = null, fighters = []; // map tab not shown
+    } catch (e) { /* keep */ }
     if (!info && !fighters.length) { if (bar) { bar.addClass("ri-hidden"); bar.riKey = ""; } return; }
     if (!info) info = { kind: "fight", text: fighters.map((c) => c.name).join(", ") };
     // don't rebuild (and lose a half-typed number) when nothing changed
-    const key = `${info.kind}|${info.text}|${fighters.map((c) => c.name).join(",")}`;
+    const lf = this.liveFight && this.liveFight.get(view);
+    const key = `${info.kind}|${info.text}|${fighters.map((c) => c.name).join(",")}|${lf && lf.isRunning && lf.isRunning() ? `run:${this.selectedOutsideFight(view, lf)}` : "idle"}`;
     if (bar && bar.riKey === key && !bar.hasClass("ri-hidden")) return;
     if (!bar) {
       // In the window's body, over everything (Atlas's own layers can't cover it),
@@ -4957,6 +5032,13 @@ class AtlasLink {
       b.addEventListener("pointerdown", (e) => e.stopPropagation());
     };
     if (info.kind === "can") btn("Group for initiative", "users", () => this.groupSelected(view), true);
+    // start a fight from these tokens (our tracker, not Atlas's), or add them to the running one
+    const live = this.liveFight && this.liveFight.get(view);
+    const running = !!(live && live.isRunning && live.isRunning());
+    const outside = running ? this.selectedOutsideFight(view, live) : (info.kind === "fight" ? 0 : this.selectedCount(view));
+    if (outside > 0) btn(running ? `Add to fight (${outside})` : `Roll initiative (${outside})`, running ? "user-plus" : "swords", () => {
+      this.fightFromSelection(view).catch((e) => { console.warn("Roll for Initiative: fight from selection", e); new Notice("Couldn't start the fight: " + e.message); });
+    }, !running);
     if (info.kind === "group" || (info.kind !== "member" && info.inGroups)) btn("Ungroup", "user-x", () => this.ungroupSelected(view));
     if (info.kind === "member") {
       btn("Select group", "scan", () => { this.selectGroupOfSelected(view); });
@@ -5035,7 +5117,18 @@ class AtlasLink {
     }
     map.groups = gmap;
     const used = new Set([...map.values(), ...[...gmap.values()].flat()]);
-    const free = Object.values(tokens).filter((t) => t && t.offMap !== true && t.kind === "character" && !used.has(t.id));
+    // a fight started from tokens picked on the map links to those tokens only
+    const fk = this.fightKey(session);
+    const FT = this.plugin.settings.atlasFightTokens || (this.plugin.settings.atlasFightTokens = {});
+    if (!FT[fk] && this.pendingFight && this.pendingFight.view === view && Date.now() - this.pendingFight.at < 60000) {
+      FT[fk] = this.pendingFight.ids.slice();
+      this.pendingFight = null;
+      const keys = Object.keys(FT);
+      while (keys.length > 10) delete FT[keys.shift()];
+      this.plugin.saveSettings();
+    }
+    const allowed = Array.isArray(FT[fk]) ? new Set(FT[fk]) : null;
+    const free = Object.values(tokens).filter((t) => t && t.offMap !== true && t.kind === "character" && !used.has(t.id) && (!allowed || allowed.has(t.id)));
     const take = (t) => { used.add(t.id); free.splice(free.indexOf(t), 1); return t.id; };
     const norm = (s) => String(s || "").trim().toLowerCase();
     const samePath = (a, b) => !!a && !!b && norm(decodeURIComponent(a)) === norm(decodeURIComponent(b));
@@ -5217,7 +5310,10 @@ class AtlasLink {
         const ordered = enc.combatants.filter((c) => tokensOf(c).length && !c.off);
         const slots = []; // [combatant, tokenId] in our order
         for (const c of ordered) for (const id of tokensOf(c)) slots.push([c, id]);
-        for (const [c, id] of slots) {
+        // Atlas's own initiative tracker is only filled when asked for
+        // (Settings → Atlas VTT); otherwise the fight runs in ours alone
+        const useTracker = !!this.plugin.settings.atlasTracker;
+        for (const [c, id] of useTracker ? slots : []) {
           const entry = S().initiative.entries.find((e) => e.tokenId === id);
           const s = session.stat(c);
           if (!entry) {
@@ -5237,7 +5333,7 @@ class AtlasLink {
           }
         }
         // same order as ours
-        slots.forEach(([, id], i) => {
+        if (useTracker) slots.forEach(([, id], i) => {
           const entries = S().initiative.entries;
           const from = entries.findIndex((e) => e.tokenId === id);
           if (from >= 0 && from !== i && typeof S().reorderInitiative === "function") S().reorderInitiative(from, i);
@@ -5264,7 +5360,7 @@ class AtlasLink {
           this.centerOn(view, standing.length ? standing : [curTok]);
         }
         const i2 = S().initiative;
-        if (!i2.isActive || i2.round !== enc.round || i2.currentIndex !== curIdx) {
+        if (useTracker && (!i2.isActive || i2.round !== enc.round || i2.currentIndex !== curIdx)) {
           try {
             store.setState((d) => {
               d.initiative.isActive = true;
@@ -5277,7 +5373,7 @@ class AtlasLink {
             for (const e2 of S().initiative.entries) S().updateInitiativeEntry(e2.id, { isActive: e2.tokenId === curTok });
           }
         }
-      } else if (ini.isActive && typeof S().endCombat === "function") {
+      } else if (this.plugin.settings.atlasTracker && ini.isActive && typeof S().endCombat === "function") {
         S().endCombat();
       }
     } finally {
@@ -5474,6 +5570,7 @@ class InitiativeSettingTab extends PluginSettingTab {
         : "Atlas VTT isn't enabled - these options do nothing until it is.",
     });
     toggle("Live-sync with open Atlas maps", "While a fight runs: initiative order, current turn, round, HP and conditions go onto the matching map tokens, and HP / conditions changed on the map come back (to character sheets too). Uses Atlas internals - if an Atlas update changes them, turn this off.", "atlasSync");
+    toggle("Use Atlas's initiative tracker too", "Off (default): the fight runs in Roll for Initiative only, and Atlas's own tracker is left alone; HP and conditions still sync to the tokens. Start a fight by selecting tokens on the map and pressing Roll initiative on the bar. On: the order, turn and round are also written into Atlas's tracker.", "atlasTracker");
     toggle("Mark whose turn it is", "A glowing ring around the token whose turn it is on the open Atlas map; on a group's turn, around every standing token of the group. It stays for the whole turn, and the tokens can still be selected and moved one by one.", "atlasTurnRing");
     toggle("Center the map on whose turn it is", "When the turn moves on, the open Atlas map pans to that creature's token, or to the middle of a group's tokens (the zoom stays as it is).", "atlasFollowTurn");
     toggle("Atlas \"Start fight\" starts Roll for Initiative", "When Atlas adds an encounter to its initiative tracker (Start fight / Add to initiative), the same fight starts here: rolled, in the sidebar and the Roll Initiative note. A single token added mid-fight joins the running fight.", "atlasStartsRoll");
@@ -5583,6 +5680,11 @@ class RollInitiativePlugin extends Plugin {
       id: "atlas-ungroup-selected",
       name: "Atlas: remove the selected tokens from their group",
       callback: () => this.atlas.ungroupSelected(),
+    });
+    this.addCommand({
+      id: "atlas-fight-selected",
+      name: "Atlas: roll initiative for the selected tokens",
+      callback: () => this.atlas.fightFromSelection().catch((e) => new Notice("Couldn't start the fight: " + e.message)),
     });
     this.addCommand({
       id: "atlas-select-group",
@@ -6344,6 +6446,11 @@ class RollInitiativePlugin extends Plugin {
     for (const c of plan.creatures) {
       const n = c._n !== undefined ? c._n : c.count;
       if (n && this.groupingOf(c, n)) groupEntries.set(c.name, (groupEntries.get(c.name) || 0) + 1);
+    }
+    // ...and a group next to single creatures of its kind gets a letter too
+    for (const c of plan.creatures) {
+      const n = c._n !== undefined ? c._n : c.count;
+      if (n && !this.groupingOf(c, n) && groupEntries.has(c.name)) groupEntries.set(c.name, groupEntries.get(c.name) + 1);
     }
     const letters = new Map();
     const letter = (name) => { const k = letters.get(name) || 0; letters.set(name, k + 1); return String.fromCharCode(65 + (k % 26)) + (k >= 26 ? Math.floor(k / 26) + 1 : ""); };
